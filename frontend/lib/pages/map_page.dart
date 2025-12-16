@@ -14,7 +14,10 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> {
   late Future<List<Task>> futureTasks;
-  List<Task> visibleTasks = [];
+  List<Task> tasks = [];
+  Task? selectedTask;
+
+  final MapController mapController = MapController();
 
   @override
   void initState() {
@@ -22,25 +25,21 @@ class _MapPageState extends State<MapPage> {
     futureTasks = fetchTasks();
   }
 
-  Future<void> _acceptTask(Task task) async {
-    await acceptTaskApi(task.id); // mock backend
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Ai acceptat: ${task.title}')),
-    );
-  }
-
-  void _refuseTask(Task task) {
+  void _selectTask(Task task) {
     setState(() {
-      visibleTasks.removeWhere((t) => t.id == task.id);
+      selectedTask = task;
     });
+
+    mapController.move(
+      LatLng(task.lat, task.lng),
+      14,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Task-uri pe hartă'),
-      ),
+      appBar: AppBar(title: const Text('Task-uri pe hartă')),
       body: FutureBuilder<List<Task>>(
         future: futureTasks,
         builder: (context, snapshot) {
@@ -52,116 +51,90 @@ class _MapPageState extends State<MapPage> {
             return Center(child: Text('Eroare: ${snapshot.error}'));
           }
 
-          if (visibleTasks.isEmpty) {
-            visibleTasks = List.from(snapshot.data!);
-          }
+          tasks = snapshot.data!;
 
           return Row(
             children: [
-              // STÂNGA – LISTA TASK-URI
+              // STÂNGA – LISTĂ TASK-URI
               Container(
-                width: 340,
+                width: 360,
                 color: Colors.grey.shade100,
                 child: ListView.builder(
-                  itemCount: visibleTasks.length,
+                  itemCount: tasks.length,
                   itemBuilder: (context, index) {
-                    final task = visibleTasks[index];
+                    final task = tasks[index];
 
-                    return Card(
-                      margin: const EdgeInsets.all(8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // CREATOR
-                            Text(
-                              task.creatorName,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-
-                            const SizedBox(height: 4),
-
-                            // TITLU TASK
-                            Text(
-                              task.title,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                              ),
-                            ),
-
-                            const SizedBox(height: 8),
-
-                            // DETALII
-                            Text(
-                              '💰 ${task.price.toStringAsFixed(0)} lei'
-                              '  •  🕒 ${_formatTime(task.startTime)}'
-                              '  •  ${task.statusLabel}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            // BUTOANE
-                            Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceBetween,
-                              children: [
-                                ElevatedButton(
-                                  onPressed: () => _acceptTask(task),
-                                  child: const Text('Acceptă'),
-                                ),
-                                OutlinedButton(
-                                  onPressed: () => _refuseTask(task),
-                                  child: const Text('Refuză'),
-                                ),
-                              ],
-                            ),
-                          ],
+                    return ListTile(
+                      title: Text(
+                        task.creatorName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
+                      subtitle: Text(
+                        '${task.title}\n'
+                        '💰 ${task.price.toStringAsFixed(0)} lei • '
+                        '🕒 ${_formatTime(task.startTime)} • '
+                        '${task.statusLabel}',
+                      ),
+                      isThreeLine: true,
+                      onTap: () => _selectTask(task),
+                      selected: selectedTask?.id == task.id,
                     );
                   },
                 ),
               ),
 
-              // DREAPTA – HARTA
+              // DREAPTA – HARTA + PANEL
               Expanded(
-                child: FlutterMap(
-                  options: const MapOptions(
-                    initialCenter: LatLng(44.4268, 26.1025), // București
-                    initialZoom: 12,
-                  ),
+                child: Stack(
                   children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.taskul.app',
+                    FlutterMap(
+                      mapController: mapController,
+                      options: const MapOptions(
+                        initialCenter: LatLng(44.4268, 26.1025),
+                        initialZoom: 12,
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'com.taskul.app',
+                        ),
+                        MarkerLayer(
+                          markers: tasks.map((task) {
+                            return Marker(
+                              point: LatLng(task.lat, task.lng),
+                              width: 40,
+                              height: 40,
+                              child: GestureDetector(
+                                onTap: () => _selectTask(task),
+                                child: Icon(
+                                  Icons.location_pin,
+                                  size: 40,
+                                  color: selectedTask?.id == task.id
+                                      ? Colors.red
+                                      : Colors.green,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
                     ),
-                    MarkerLayer(
-                      markers: visibleTasks.map((task) {
-                        return Marker(
-                          point: LatLng(task.lat, task.lng),
-                          width: 40,
-                          height: 40,
-                          child: const Icon(
-                            Icons.location_pin,
-                            color: Colors.red,
-                            size: 40,
-                          ),
-                        );
-                      }).toList(),
-                    ),
+
+                    if (selectedTask != null)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: _TaskDetailsPanel(
+                          task: selectedTask!,
+                          onClose: () {
+                            setState(() {
+                              selectedTask = null;
+                            });
+                          },
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -176,5 +149,110 @@ class _MapPageState extends State<MapPage> {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+}
+
+class _TaskDetailsPanel extends StatelessWidget {
+  final Task task;
+  final VoidCallback onClose;
+
+  const _TaskDetailsPanel({
+    required this.task,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 360,
+      height: double.infinity,
+      color: Colors.white,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // HEADER
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    task.title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: onClose,
+                  ),
+                ],
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                task.creatorName,
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '💰 ${task.price.toStringAsFixed(0)} lei\n'
+                '🕒 ${task.startTime}\n'
+                'Status: ${task.statusLabel}',
+              ),
+            ),
+
+            if (task.images.isNotEmpty)
+              SizedBox(
+                height: 200,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: task.images.length,
+                  itemBuilder: (context, i) {
+                    return Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Image.network(
+                        task.images[i],
+                        width: 260,
+                        fit: BoxFit.cover,
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            const Spacer(),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {},
+                      child: const Text('Acceptă'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {},
+                      child: const Text('Refuză'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/task.dart';
 
+const String baseUrl = 'http://localhost:3000';
+
 Future<List<Task>> fetchTasks() async {
-  final res = await http.get(
-    Uri.parse('http://localhost:3000/tasks'),
-  );
+  final res = await http.get(Uri.parse('$baseUrl/tasks'));
 
   if (res.statusCode == 200) {
     final List data = jsonDecode(res.body);
@@ -15,16 +15,10 @@ Future<List<Task>> fetchTasks() async {
   }
 }
 
-// 🔹 ACCEPT TASK (mock)
 Future<void> acceptTaskApi(int taskId) async {
-  await http.post(
-    Uri.parse('http://localhost:3000/tasks/$taskId/accept'),
-  );
+  await http.post(Uri.parse('$baseUrl/tasks/$taskId/accept'));
 }
 
-// 🔹 REFUZ TASK (mock)
 Future<void> refuseTaskApi(int taskId) async {
-  await http.post(
-    Uri.parse('http://localhost:3000/tasks/$taskId/refuse'),
-  );
+  await http.post(Uri.parse('$baseUrl/tasks/$taskId/refuse'));
 }

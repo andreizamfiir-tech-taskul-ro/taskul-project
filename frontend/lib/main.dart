@@ -11,8 +11,8 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
-      home: HomeScreen(),
       debugShowCheckedModeBanner: false,
+      home: HomeScreen(),
     );
   }
 }
@@ -27,9 +27,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  final pages = [
-    const Center(child: Text('Home')),
-    const MapPage(),
+  final List<Widget> pages = const [
+    Center(child: Text('Home')),
+    MapPage(),
   ];
 
   @override
