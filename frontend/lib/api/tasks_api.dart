@@ -1,8 +1,15 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/task.dart';
 
-const String baseUrl = 'http://localhost:3000';
+String get baseUrl {
+  if (kIsWeb) {
+    final host = Uri.base.host.isNotEmpty ? Uri.base.host : 'localhost';
+    return 'http://$host:3000';
+  }
+  return 'http://localhost:3000';
+}
 
 Future<List<Task>> fetchTasks() async {
   final res = await http.get(Uri.parse('$baseUrl/tasks'));

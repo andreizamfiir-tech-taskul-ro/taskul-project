@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 
 void main() {
@@ -27,8 +28,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> pages = const [
-    Center(child: Text('Home')),
+  late final List<Widget> pages = const [
+    HomePage(),
     MapPage(),
   ];
 
@@ -46,11 +47,11 @@ class _HomeScreenState extends State<HomeScreen> {
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.list),
-            label: 'Home',
+            label: 'Acasa',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map),
-            label: 'Hartă',
+            icon: Icon(Icons.task_alt_outlined),
+            label: 'Taskuri',
           ),
         ],
       ),

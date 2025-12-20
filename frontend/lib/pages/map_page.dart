@@ -4,18 +4,21 @@ import 'package:latlong2/latlong.dart';
 
 import '../api/tasks_api.dart';
 import '../models/task.dart';
+import 'task_detail_page.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
   @override
-  State<MapPage> createState() => _MapPageState();
+  State<MapPage> createState() => MapPageState();
 }
 
-class _MapPageState extends State<MapPage> {
+class MapPageState extends State<MapPage> {
   late Future<List<Task>> futureTasks;
   List<Task> tasks = [];
   Task? selectedTask;
+  Task? _pendingFocusTask;
+  bool _isActionLoading = false;
 
   final MapController mapController = MapController();
 
@@ -23,6 +26,12 @@ class _MapPageState extends State<MapPage> {
   void initState() {
     super.initState();
     futureTasks = fetchTasks();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      futureTasks = fetchTasks();
+    });
   }
 
   void _selectTask(Task task) {
@@ -36,10 +45,80 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  // Can be used later if we want to jump from another tab.
+  void focusOnTask(Task task) {
+    if (tasks.isNotEmpty) {
+      _selectTask(task);
+    } else {
+      _pendingFocusTask = task;
+    }
+  }
+
+  void _openTaskDetails(Task task) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TaskDetailPage(task: task),
+      ),
+    );
+  }
+
+  Future<void> _handleAction(Task task, bool accept) async {
+    setState(() {
+      _isActionLoading = true;
+    });
+
+    try {
+      if (accept) {
+        await acceptTaskApi(task.id);
+      } else {
+        await refuseTaskApi(task.id);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(accept ? 'Task acceptat' : 'Task refuzat'),
+          ),
+        );
+      }
+
+      await _refresh();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('A aparut o eroare: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isActionLoading = false;
+        });
+      }
+    }
+  }
+
+  String _formatTime(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Task-uri pe hartă')),
+      backgroundColor: const Color(0xFFF1EEF6),
+      appBar: AppBar(
+        title: const Text('Taskuri'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refresh,
+          ),
+        ],
+      ),
       body: FutureBuilder<List<Task>>(
         future: futureTasks,
         builder: (context, snapshot) {
@@ -51,11 +130,22 @@ class _MapPageState extends State<MapPage> {
             return Center(child: Text('Eroare: ${snapshot.error}'));
           }
 
-          tasks = snapshot.data!;
+          tasks = snapshot.data ?? [];
+
+          if (_pendingFocusTask != null) {
+            final pending = _pendingFocusTask!;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _selectTask(pending);
+              _pendingFocusTask = null;
+            });
+          }
+
+          if (tasks.isEmpty) {
+            return const Center(child: Text('Nu sunt task-uri disponibile.'));
+          }
 
           return Row(
             children: [
-              // STÂNGA – LISTĂ TASK-URI
               Container(
                 width: 360,
                 color: Colors.grey.shade100,
@@ -63,29 +153,71 @@ class _MapPageState extends State<MapPage> {
                   itemCount: tasks.length,
                   itemBuilder: (context, index) {
                     final task = tasks[index];
+                    final isSelected = selectedTask?.id == task.id;
 
                     return ListTile(
-                      title: Text(
-                        task.creatorName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      selected: isSelected,
+                      selectedTileColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
                       ),
-                      subtitle: Text(
-                        '${task.title}\n'
-                        '💰 ${task.price.toStringAsFixed(0)} lei • '
-                        '🕒 ${_formatTime(task.startTime)} • '
-                        '${task.statusLabel}',
+                      leading: const Icon(Icons.task_alt_outlined),
+                      title: Text(
+                        task.title,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('de ${task.creatorName}'),
+                          const SizedBox(height: 2),
+                          Text(
+                            task.address,
+                            style: const TextStyle(
+                              color: Colors.deepOrange,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${task.price.toStringAsFixed(0)} lei | '
+                            '${_formatTime(task.startTime)} | '
+                            '${task.statusLabel}',
+                          ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              onPressed: () => _openTaskDetails(task),
+                              child: const Text('Vezi detalii'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.green.shade200),
+                        ),
+                        child: Text(
+                          '${task.price.toStringAsFixed(0)} lei',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.green,
+                          ),
+                        ),
                       ),
                       isThreeLine: true,
                       onTap: () => _selectTask(task),
-                      selected: selectedTask?.id == task.id,
                     );
                   },
                 ),
               ),
-
-              // DREAPTA – HARTA + PANEL
               Expanded(
                 child: Stack(
                   children: [
@@ -122,7 +254,6 @@ class _MapPageState extends State<MapPage> {
                         ),
                       ],
                     ),
-
                     if (selectedTask != null)
                       Align(
                         alignment: Alignment.centerRight,
@@ -133,6 +264,10 @@ class _MapPageState extends State<MapPage> {
                               selectedTask = null;
                             });
                           },
+                          onViewDetails: () => _openTaskDetails(selectedTask!),
+                          onAction: (accept) =>
+                              _handleAction(selectedTask!, accept),
+                          isLoading: _isActionLoading,
                         ),
                       ),
                   ],
@@ -144,22 +279,28 @@ class _MapPageState extends State<MapPage> {
       ),
     );
   }
+}
+
+class _TaskDetailsPanel extends StatelessWidget {
+  final Task task;
+  final VoidCallback onClose;
+  final VoidCallback onViewDetails;
+  final void Function(bool accept) onAction;
+  final bool isLoading;
+
+  const _TaskDetailsPanel({
+    required this.task,
+    required this.onClose,
+    required this.onViewDetails,
+    required this.onAction,
+    required this.isLoading,
+  });
 
   String _formatTime(DateTime dt) {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
   }
-}
-
-class _TaskDetailsPanel extends StatelessWidget {
-  final Task task;
-  final VoidCallback onClose;
-
-  const _TaskDetailsPanel({
-    required this.task,
-    required this.onClose,
-  });
 
   @override
   Widget build(BuildContext context) {
@@ -171,17 +312,18 @@ class _TaskDetailsPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // HEADER
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    task.title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                  Expanded(
+                    child: Text(
+                      task.title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -191,7 +333,6 @@ class _TaskDetailsPanel extends StatelessWidget {
                 ],
               ),
             ),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
@@ -199,16 +340,33 @@ class _TaskDetailsPanel extends StatelessWidget {
                 style: const TextStyle(color: Colors.grey),
               ),
             ),
-
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.location_on_outlined,
+                      size: 18, color: Colors.deepOrange),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      task.address,
+                      style: const TextStyle(
+                        color: Colors.deepOrange,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
-                '💰 ${task.price.toStringAsFixed(0)} lei\n'
-                '🕒 ${task.startTime}\n'
+                'Pret: ${task.price.toStringAsFixed(0)} lei\n'
+                'Start: ${_formatTime(task.startTime)}\n'
                 'Status: ${task.statusLabel}',
               ),
             ),
-
             if (task.images.isNotEmpty)
               SizedBox(
                 height: 200,
@@ -227,25 +385,52 @@ class _TaskDetailsPanel extends StatelessWidget {
                   },
                 ),
               ),
-
             const Spacer(),
-
             Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {},
-                      child: const Text('Acceptă'),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: onViewDetails,
+                      child: const Text('Vezi detalii complete'),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {},
-                      child: const Text('Refuză'),
-                    ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: isLoading ? null : () => onAction(true),
+                          child: isLoading
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Accepta'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: isLoading ? null : () => onAction(false),
+                          child: isLoading
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Refuza'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

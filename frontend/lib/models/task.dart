@@ -8,6 +8,7 @@ class Task {
   final double lat;
   final double lng;
   final List<String> images;
+  final String address;
 
   Task({
     required this.id,
@@ -19,6 +20,7 @@ class Task {
     required this.lat,
     required this.lng,
     required this.images,
+    required this.address,
   });
 
   factory Task.fromJson(Map<String, dynamic> json) {
@@ -30,12 +32,13 @@ class Task {
       startTime: json['start_time'] != null
           ? DateTime.parse(json['start_time'])
           : DateTime.now(),
-      statusLabel: json['status_label'] ?? '—',
+      statusLabel: json['status_label'] ?? '-',
       lat: (json['lat'] as num).toDouble(),
       lng: (json['lng'] as num).toDouble(),
       images: (json['images'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
+      address: json['address']?.toString() ?? 'Adresa necunoscuta',
     );
   }
 }
