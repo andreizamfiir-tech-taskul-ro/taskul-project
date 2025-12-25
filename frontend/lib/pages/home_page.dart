@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../api/tasks_api.dart';
 import '../models/task.dart';
 import 'task_detail_page.dart';
+import '../widgets/auth_dialog.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -261,6 +262,20 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
+              if (isCompact)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () {},
+                      icon: Icon(Icons.favorite_border, color: primaryBlue),
+                    ),
+                    IconButton(
+                      onPressed: () => showAuthDialog(context),
+                      icon: Icon(Icons.person_outline, color: primaryBlue),
+                    ),
+                  ],
+                ),
               if (!isCompact)
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -297,7 +312,7 @@ class _HomePageState extends State<HomePage> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      onPressed: () {},
+                      onPressed: () => showAuthDialog(context),
                       child: const Text('Conectare'),
                     ),
                   ],
@@ -418,8 +433,8 @@ class _HomePageState extends State<HomePage> {
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                              ),
-                              onPressed: isLoading ? null : () {},
+                          ),
+                              onPressed: isLoading ? null : () => showAuthDialog(context),
                               child: const Text('Inregistrati-va acum'),
                             ),
                           ),
@@ -673,7 +688,7 @@ class _HomePageState extends State<HomePage> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                onPressed: () {},
+                onPressed: () => showAuthDialog(context),
                 child: const Text('Inregistrati-va acum'),
               ),
             ],

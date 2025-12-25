@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'pages/home_page.dart';
 import 'pages/map_page.dart';
+import 'pages/profile_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -31,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final List<Widget> pages = const [
     HomePage(),
     MapPage(),
+    ProfilePage(),
   ];
 
   @override
@@ -52,6 +54,10 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.task_alt_outlined),
             label: 'Taskuri',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            label: 'Profil',
           ),
         ],
       ),
