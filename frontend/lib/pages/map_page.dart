@@ -35,10 +35,13 @@ class MapPageState extends State<MapPage> {
   }
 
   void _selectTask(Task task) {
+    final isSame = selectedTask?.id == task.id;
     setState(() {
-      selectedTask = task;
+      selectedTask = isSame ? null : task;
     });
-    mapController.move(LatLng(task.lat, task.lng), 14);
+    if (!isSame) {
+      mapController.move(LatLng(task.lat, task.lng), 14);
+    }
   }
 
   // Can be used later if we want to jump from another tab.

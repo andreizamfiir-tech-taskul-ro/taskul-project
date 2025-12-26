@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../state/auth_state.dart';
+import '../widgets/auth_dialog.dart';
+
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
 
@@ -8,37 +11,52 @@ class ProfilePage extends StatelessWidget {
     const primaryBlue = Color(0xFF0040FF);
     const darkBg = Color(0xFF0F172A);
     const cardBg = Color(0xFF111827);
-    const accent = Color(0xFF22D3EE);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
-      body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(
-                    primaryBlue: primaryBlue,
-                    darkBg: darkBg,
-                    accent: accent,
+    final auth = AuthState.instance;
+
+    return AnimatedBuilder(
+      animation: auth,
+      builder: (context, _) {
+        if (!auth.isAuthenticated || auth.user == null) {
+          return _LoggedOutScaffold(primaryBlue: primaryBlue);
+        }
+
+        final user = auth.user!;
+        return Scaffold(
+          backgroundColor: const Color(0xFFF6F7FB),
+          body: SafeArea(
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _Header(
+                        primaryBlue: primaryBlue,
+                        darkBg: darkBg,
+                        userName: user.name,
+                        email: user.email,
+                        emailVerified: user.emailVerifiedAt != null,
+                        phoneVerified: user.phoneVerifiedAt != null,
+                        onLogout: auth.logout,
+                      ),
+                      const SizedBox(height: 12),
+                      _StatsRow(cardBg: cardBg, primaryBlue: primaryBlue),
+                      const SizedBox(height: 12),
+                      _AboutSection(cardBg: cardBg, primaryBlue: primaryBlue),
+                      const SizedBox(height: 12),
+                      _ContentSection(cardBg: cardBg, primaryBlue: primaryBlue),
+                      const SizedBox(height: 12),
+                      _SidebarSection(cardBg: cardBg, primaryBlue: primaryBlue),
+                      const SizedBox(height: 24),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  _StatsRow(cardBg: cardBg, primaryBlue: primaryBlue),
-                  const SizedBox(height: 12),
-                  _AboutSection(cardBg: cardBg, primaryBlue: primaryBlue),
-                  const SizedBox(height: 12),
-                  _ContentSection(cardBg: cardBg, primaryBlue: primaryBlue),
-                  const SizedBox(height: 12),
-                  _SidebarSection(cardBg: cardBg, primaryBlue: primaryBlue),
-                  const SizedBox(height: 24),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -46,12 +64,20 @@ class ProfilePage extends StatelessWidget {
 class _Header extends StatelessWidget {
   final Color primaryBlue;
   final Color darkBg;
-  final Color accent;
+  final String userName;
+  final String email;
+  final VoidCallback onLogout;
+  final bool emailVerified;
+  final bool phoneVerified;
 
   const _Header({
     required this.primaryBlue,
     required this.darkBg,
-    required this.accent,
+    required this.userName,
+    required this.email,
+    required this.onLogout,
+    required this.emailVerified,
+    required this.phoneVerified,
   });
 
   @override
@@ -103,14 +129,8 @@ class _Header extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Schimbarea fundalului va veni in curand.'),
-                        ),
-                      );
-                    },
-                    child: const Text('Schimba fundalul'),
+                    onPressed: onLogout,
+                    child: const Text('Deconectare'),
                   ),
                 ),
                 const Spacer(),
@@ -136,32 +156,28 @@ class _Header extends StatelessWidget {
                         Row(
                           children: [
                             const Text(
-                              'Tasker Pro',
+                              'Profil personal',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 20,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.9),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                'Level 12',
-                                style: TextStyle(
-                                  color: primaryBlue,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
                           ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          userName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          email,
+                          style: const TextStyle(color: Colors.white70),
                         ),
                         const SizedBox(height: 6),
                         Row(
@@ -182,42 +198,16 @@ class _Header extends StatelessWidget {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () {},
-                      icon: const Icon(Icons.person_add_alt),
-                      label: const Text('Follow'),
+                    _VerificationPill(
+                      icon: Icons.email_outlined,
+                      label: emailVerified ? 'Email verificat' : 'Email nevalidat',
+                      color: emailVerified ? Colors.green : Colors.orange,
                     ),
                     const SizedBox(width: 10),
-                    OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: Colors.white.withOpacity(0.8)),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () {},
-                      child: const Text('Mesaj'),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () {},
-                      icon: Icon(Icons.more_horiz, color: Colors.white.withOpacity(0.9)),
+                    _VerificationPill(
+                      icon: Icons.phone_iphone,
+                      label: phoneVerified ? 'Telefon verificat' : 'Telefon nevalidat',
+                      color: phoneVerified ? Colors.green : Colors.orange,
                     ),
                   ],
                 ),
@@ -226,6 +216,89 @@ class _Header extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _VerificationPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _VerificationPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoggedOutScaffold extends StatelessWidget {
+  final Color primaryBlue;
+
+  const _LoggedOutScaffold({required this.primaryBlue});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F7FB),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 72, color: Colors.grey),
+              const SizedBox(height: 16),
+              const Text(
+                'Pentru a vedea profilul, conectati-va sau creati un cont.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryBlue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                onPressed: () => showAuthDialog(context),
+                child: const Text('Conectare / Inregistrare'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

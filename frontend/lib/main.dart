@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 import 'pages/profile_page.dart';
+import 'pages/create_task_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -31,15 +32,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   late final List<Widget> pages = const [
     HomePage(),
+    CreateTaskPage(),
     MapPage(),
     ProfilePage(),
   ];
 
   @override
   Widget build(BuildContext context) {
+    const primaryBlue = Color(0xFF0040FF);
     return Scaffold(
       body: pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: primaryBlue,
+        unselectedItemColor: Colors.grey,
         currentIndex: _currentIndex,
         onTap: (index) {
           setState(() {
@@ -50,6 +56,10 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.list),
             label: 'Acasa',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.add_circle_outline),
+            label: 'Creeaza',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.task_alt_outlined),

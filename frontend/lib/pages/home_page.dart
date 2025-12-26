@@ -4,6 +4,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../api/tasks_api.dart';
 import '../models/task.dart';
+import '../state/auth_state.dart';
+import 'messages_page.dart';
+import 'map_page.dart';
+import 'create_task_page.dart';
 import 'task_detail_page.dart';
 import '../widgets/auth_dialog.dart';
 
@@ -43,6 +47,149 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       futureTasks = fetchTasks();
     });
+  }
+
+  Widget _buildAuthAction(Color primaryBlue, {bool compact = false}) {
+    final auth = AuthState.instance;
+
+    String initials(String name) {
+      final parts = name.trim().split(' ');
+      if (parts.isEmpty) return '';
+      final first = parts.first.isNotEmpty ? parts.first[0] : '';
+      final last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
+      return (first + last).toUpperCase();
+    }
+
+    return AnimatedBuilder(
+      animation: auth,
+      builder: (context, _) {
+        if (auth.isAuthenticated && auth.user != null) {
+          final user = auth.user!;
+          final avatar = CircleAvatar(
+            radius: compact ? 16 : 18,
+            backgroundColor: primaryBlue.withOpacity(0.12),
+            child: Text(
+              initials(user.name),
+              style: TextStyle(
+                color: primaryBlue,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          );
+
+          Widget buildMenuButton(Widget child) {
+            return PopupMenuButton<String>(
+              tooltip: 'Meniu cont',
+              onSelected: (value) {
+                switch (value) {
+                  case 'create':
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const CreateTaskPage()),
+                    );
+                    break;
+                  case 'tasks':
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const MapPage()),
+                    );
+                    break;
+                  case 'messages':
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const MessagesPage(),
+                      ),
+                    );
+                    break;
+                  case 'settings':
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Navigare spre setari (TODO)')),
+                    );
+                    break;
+                  case 'profile':
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Navigare spre profil (TODO)')),
+                    );
+                    break;
+                  case 'logout':
+                    auth.logout();
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'create',
+                  child: Text('Creeaza task'),
+                ),
+                const PopupMenuItem(
+                  value: 'tasks',
+                  child: Text('Task-urile mele'),
+                ),
+                const PopupMenuItem(
+                  value: 'messages',
+                  child: Text('Mesaje'),
+                ),
+                const PopupMenuItem(
+                  value: 'settings',
+                  child: Text('Setari'),
+                ),
+                const PopupMenuItem(
+                  value: 'profile',
+                  child: Text('Profil'),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Text('Deconectare'),
+                ),
+              ],
+              child: child,
+            );
+          }
+
+          if (compact) {
+            return buildMenuButton(avatar);
+          }
+
+          return buildMenuButton(
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                avatar,
+                const SizedBox(width: 8),
+                Text(
+                  user.name,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.arrow_drop_down),
+              ],
+            ),
+          );
+        }
+
+        if (compact) {
+          return IconButton(
+            onPressed: () => showAuthDialog(context),
+            icon: Icon(Icons.person_outline, color: primaryBlue),
+          );
+        }
+
+        return ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryBlue,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 12,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          onPressed: () => showAuthDialog(context),
+          child: const Text('Conectare'),
+        );
+      },
+    );
   }
 
   Future<void> _handleAction({
@@ -134,67 +281,79 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     const primaryBlue = Color(0xFF0040FF);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: primaryBlue,
-          onRefresh: _refresh,
-          child: FutureBuilder<List<Task>>(
-            future: futureTasks,
-            builder: (context, snapshot) {
-              final tasks = snapshot.data ?? [];
-              final isLoading = snapshot.connectionState == ConnectionState.waiting;
-              final heroTask = tasks.isNotEmpty ? tasks.first : null;
+    final auth = AuthState.instance;
 
-              return CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(child: _buildTopNav(primaryBlue)),
-                  SliverToBoxAdapter(child: _buildTrustStrip()),
-                  SliverPersistentHeader(
-                    pinned: true,
-                    delegate: _CategoryHeaderDelegate(
-                      categories: _categories,
-                      selectedIndex: _selectedCategoryIndex,
-                      onTap: (index) {
-                        setState(() => _selectedCategoryIndex = index);
-                      },
-                      primaryBlue: primaryBlue,
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: _buildHeroSection(primaryBlue, heroTask, isLoading),
-                  ),
-                  SliverToBoxAdapter(
-                    child: _buildCollectionStrip(primaryBlue),
-                  ),
-                  if (isLoading)
-                    const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 48),
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                    )
-                  else if (tasks.isEmpty)
-                    const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 48),
-                        child: Center(
-                          child: Text('Nu exista task-uri de afisat momentan.'),
+    return AnimatedBuilder(
+      animation: auth,
+      builder: (context, _) {
+        return Scaffold(
+          backgroundColor: const Color(0xFFF6F7FB),
+          body: SafeArea(
+            child: RefreshIndicator(
+              color: primaryBlue,
+              onRefresh: _refresh,
+              child: FutureBuilder<List<Task>>(
+                future: futureTasks,
+                builder: (context, snapshot) {
+                  final tasks = snapshot.data ?? [];
+                  final isLoading = snapshot.connectionState == ConnectionState.waiting;
+                  final heroTask = tasks.isNotEmpty ? tasks.first : null;
+
+                  return CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      SliverToBoxAdapter(child: _buildTopNav(primaryBlue)),
+                      SliverToBoxAdapter(child: _buildTrustStrip()),
+                      SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _CategoryHeaderDelegate(
+                          categories: _categories,
+                          selectedIndex: _selectedCategoryIndex,
+                          onTap: (index) {
+                            setState(() => _selectedCategoryIndex = index);
+                          },
+                          primaryBlue: primaryBlue,
                         ),
                       ),
-                    )
-                  else
-                    _buildGridSection(primaryBlue, tasks),
-                  SliverToBoxAdapter(child: _buildFooter(primaryBlue)),
-                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                ],
-              );
-            },
+                      SliverToBoxAdapter(
+                        child: _buildHeroSection(
+                          primaryBlue,
+                          heroTask,
+                          isLoading,
+                          isAuthenticated: auth.isAuthenticated,
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: _buildCollectionStrip(primaryBlue),
+                      ),
+                      if (isLoading)
+                        const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 48),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                        )
+                      else if (tasks.isEmpty)
+                        const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 48),
+                            child: Center(
+                              child: Text('Nu exista task-uri de afisat momentan.'),
+                            ),
+                          ),
+                        )
+                      else
+                        _buildGridSection(primaryBlue, tasks),
+                      SliverToBoxAdapter(child: _buildFooter(primaryBlue, auth.isAuthenticated)),
+                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -236,6 +395,17 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
               if (!isCompact) const SizedBox(width: 16),
+              if (isCompact)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () {},
+                      icon: Icon(Icons.favorite_border, color: primaryBlue),
+                    ),
+                    _buildAuthAction(primaryBlue, compact: true),
+                  ],
+                ),
               ConstrainedBox(
                 constraints: BoxConstraints(
                   minWidth: 220,
@@ -262,20 +432,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              if (isCompact)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      onPressed: () {},
-                      icon: Icon(Icons.favorite_border, color: primaryBlue),
-                    ),
-                    IconButton(
-                      onPressed: () => showAuthDialog(context),
-                      icon: Icon(Icons.person_outline, color: primaryBlue),
-                    ),
-                  ],
-                ),
               if (!isCompact)
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -300,21 +456,7 @@ class _HomePageState extends State<HomePage> {
                       icon: const Icon(Icons.language),
                     ),
                     const SizedBox(width: 12),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () => showAuthDialog(context),
-                      child: const Text('Conectare'),
-                    ),
+                    _buildAuthAction(primaryBlue),
                   ],
                 ),
             ],
@@ -359,7 +501,8 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildHeroSection(Color primaryBlue, Task? heroTask, bool isLoading) {
+  Widget _buildHeroSection(Color primaryBlue, Task? heroTask, bool isLoading,
+      {required bool isAuthenticated}) {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
@@ -418,26 +561,29 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   ),
                           ),
-                          Positioned(
-                            right: 16,
-                            bottom: 16,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryBlue,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 12,
+                          if (!isAuthenticated)
+                            Positioned(
+                              right: 16,
+                              bottom: 16,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryBlue,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 12,
+                                  ),
+                                  elevation: 6,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
                                 ),
-                                elevation: 6,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                          ),
-                              onPressed: isLoading ? null : () => showAuthDialog(context),
-                              child: const Text('Inregistrati-va acum'),
+                                onPressed: isLoading
+                                    ? null
+                                    : () => showAuthDialog(context, startInRegister: true),
+                                child: const Text('Inregistrati-va acum'),
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),
@@ -581,7 +727,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildFooter(Color primaryBlue) {
+  Widget _buildFooter(Color primaryBlue, bool isAuthenticated) {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -675,22 +821,24 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 12,
+              if (!AuthState.instance.isAuthenticated)
+              if (!isAuthenticated)
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
+                    ),
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
-                  elevation: 8,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  onPressed: () => showAuthDialog(context, startInRegister: true),
+                  child: const Text('Inregistrati-va acum'),
                 ),
-                onPressed: () => showAuthDialog(context),
-                child: const Text('Inregistrati-va acum'),
-              ),
             ],
           ),
         ],

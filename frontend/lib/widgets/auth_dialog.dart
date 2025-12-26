@@ -1,20 +1,32 @@
 import 'package:flutter/material.dart';
 
+import '../state/auth_state.dart';
+import 'phone_verification_dialog.dart';
+
 class AuthDialog extends StatefulWidget {
-  const AuthDialog({super.key});
+  final bool startInRegister;
+
+  const AuthDialog({
+    super.key,
+    this.startInRegister = false,
+  });
 
   @override
   State<AuthDialog> createState() => _AuthDialogState();
 }
 
 class _AuthDialogState extends State<AuthDialog> {
-  bool _isLogin = true;
-  bool _rememberMe = false;
+  late bool _isLogin = !widget.startInRegister;
+  bool _isSubmitting = false;
+
+  final RegExp _emailRegex =
+      RegExp(r'^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$', caseSensitive: false);
 
   final TextEditingController _firstNameCtrl = TextEditingController();
   final TextEditingController _lastNameCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passwordCtrl = TextEditingController();
+  final TextEditingController _phoneCtrl = TextEditingController();
 
   @override
   void dispose() {
@@ -22,6 +34,7 @@ class _AuthDialogState extends State<AuthDialog> {
     _lastNameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
+    _phoneCtrl.dispose();
     super.dispose();
   }
 
@@ -29,12 +42,91 @@ class _AuthDialogState extends State<AuthDialog> {
     setState(() => _isLogin = !_isLogin);
   }
 
-  void _submit() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_isLogin ? 'Login placeholder' : 'Signup placeholder'),
-      ),
-    );
+  Future<void> _submit() async {
+    if (_isSubmitting) return;
+    final email = _emailCtrl.text.trim().toLowerCase();
+    final password = _passwordCtrl.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Introduceti email si parola')),
+      );
+      return;
+    }
+
+    if (!_emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Email invalid')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final auth = AuthState.instance;
+      if (_isLogin) {
+        await auth.login(email: email, password: password);
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Autentificare reusita')),
+          );
+        }
+      } else {
+        final fullName =
+            '${_firstNameCtrl.text.trim()} ${_lastNameCtrl.text.trim()}'.trim();
+        if (fullName.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Introduceti nume si prenume')),
+          );
+          setState(() => _isSubmitting = false);
+          return;
+        }
+        final phone = _phoneCtrl.text.trim();
+        if (phone.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Introduceti numarul de telefon')),
+          );
+          setState(() => _isSubmitting = false);
+          return;
+        }
+        await auth.register(
+          name: fullName,
+          email: email,
+          password: password,
+          phone: phone,
+        );
+        // Send email verification code (dev returns code)
+        try {
+          final devCode = await auth.sendEmailVerification();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Cod email trimis (dev: $devCode)')),
+            );
+          }
+        } catch (_) {}
+
+        if (mounted) {
+          Navigator.of(context).pop();
+          await showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => PhoneVerificationDialog(initialPhone: phone),
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cont creat, verificati email-ul')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Eroare: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
@@ -91,6 +183,15 @@ class _AuthDialogState extends State<AuthDialog> {
                     ),
                     const SizedBox(height: 14),
                     if (!_isLogin) _buildNameFields(),
+                    if (!_isLogin)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildTextField(
+                          controller: _phoneCtrl,
+                          hint: 'Telefon (optional)',
+                          keyboardType: TextInputType.phone,
+                        ),
+                      ),
                     _buildTextField(
                       controller: _emailCtrl,
                       hint: 'Adresa de e-mail',
@@ -103,26 +204,10 @@ class _AuthDialogState extends State<AuthDialog> {
                       obscure: true,
                     ),
                     const SizedBox(height: 6),
-                    if (!_isLogin)
-                      Text(
-                        'Cel putin 8 caractere, o majuscula, o litera mica, un numar si un caracter special',
-                        style: const TextStyle(color: Colors.grey, fontSize: 12),
-                      )
-                    else
-                      Row(
-                        children: [
-                          Checkbox(
-                            value: _rememberMe,
-                            onChanged: (val) => setState(() => _rememberMe = val ?? false),
-                          ),
-                          const Text('Tine-ma minte'),
-                          const Spacer(),
-                          TextButton(
-                            onPressed: () {},
-                            child: const Text('V-ati uitat parola?'),
-                          ),
-                        ],
-                      ),
+                    Text(
+                      'Parola este stocata hashed in baza de date (bcrypt). Pastrati-o in siguranta.',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
                     const SizedBox(height: 16),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
@@ -134,7 +219,17 @@ class _AuthDialogState extends State<AuthDialog> {
                         ),
                       ),
                       onPressed: _submit,
-                      child: Text(_isLogin ? 'Conectare' : 'De acord, continua'),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Text(_isLogin ? 'Conectare' : 'De acord, continua'),
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -296,10 +391,13 @@ class _AuthDialogState extends State<AuthDialog> {
   }
 }
 
-Future<void> showAuthDialog(BuildContext context) async {
+Future<void> showAuthDialog(
+  BuildContext context, {
+  bool startInRegister = false,
+}) async {
   await showDialog(
     context: context,
     barrierDismissible: true,
-    builder: (_) => const AuthDialog(),
+    builder: (_) => AuthDialog(startInRegister: startInRegister),
   );
 }
