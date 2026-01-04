@@ -4,10 +4,14 @@ import 'package:latlong2/latlong.dart';
 
 import '../api/tasks_api.dart';
 import '../models/task.dart';
+import '../state/auth_state.dart';
+import '../widgets/auth_dialog.dart';
 import 'task_detail_page.dart';
 
 class MapPage extends StatefulWidget {
-  const MapPage({super.key});
+  final Task? focusTask;
+
+  const MapPage({super.key, this.focusTask});
 
   @override
   State<MapPage> createState() => MapPageState();
@@ -26,6 +30,7 @@ class MapPageState extends State<MapPage> {
   void initState() {
     super.initState();
     futureTasks = fetchTasks();
+    _pendingFocusTask = widget.focusTask;
   }
 
   Future<void> _refresh() async {
@@ -62,15 +67,22 @@ class MapPageState extends State<MapPage> {
   }
 
   Future<void> _handleAction(Task task, bool accept) async {
+    final auth = AuthState.instance;
+    if (!auth.isAuthenticated || auth.user == null) {
+      if (mounted) {
+        await showAuthDialog(context);
+      }
+      return;
+    }
     setState(() {
       _isActionLoading = true;
     });
 
     try {
       if (accept) {
-        await acceptTaskApi(task.id);
+        await acceptTaskApi(task.id, userId: auth.user!.id);
       } else {
-        await refuseTaskApi(task.id);
+        await refuseTaskApi(task.id, userId: auth.user!.id);
       }
 
       if (mounted) {
@@ -478,7 +490,7 @@ class _TaskListCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      task.address,
+                      task.shortAddress,
                       style: const TextStyle(
                         color: Colors.deepOrange,
                         fontSize: 13,
@@ -644,7 +656,7 @@ class _SelectedTaskCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    task.address,
+                    task.shortAddress,
                     style: const TextStyle(color: Colors.deepOrange),
                   ),
                 ),

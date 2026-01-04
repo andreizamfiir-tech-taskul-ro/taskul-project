@@ -20,8 +20,48 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-const emailRegex =
-  /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+
+const statusLabels = {
+  0: 'Disponibil',
+  1: 'Acceptat',
+  2: 'In desfasurare',
+  3: 'Finalizat',
+};
+
+async function fetchTaskWithLocation(taskId) {
+  const result = await pool.query(
+    `
+    SELECT tasks.*,
+           cities.name AS city_name,
+           counties.name AS county_name,
+           countries.name AS country_name
+    FROM tasks
+    LEFT JOIN cities ON cities.id = tasks.city_id
+    LEFT JOIN counties ON counties.id = tasks.county_id
+    LEFT JOIN countries ON countries.id = tasks.country_id
+    WHERE tasks.id = $1
+    LIMIT 1
+  `,
+    [taskId]
+  );
+  return result.rows[0];
+}
+
+function buildLocationLabel(row) {
+  const addressPart = row.address ? row.address.toString() : '';
+  const areaPart = [row.city_name, row.county_name, row.country_name]
+    .filter(Boolean)
+    .map((v) => v.toString())
+    .join(', ');
+  if (addressPart && areaPart) return `${addressPart}, ${areaPart}`;
+  if (addressPart) return addressPart;
+  if (areaPart) return areaPart;
+  if (row.lat && row.lng) {
+    return `Lat ${Number(row.lat).toFixed(3)}, Lng ${Number(row.lng).toFixed(3)}`;
+  }
+  return 'Locatie indisponibila';
+}
 
 function generateCode(length = 4) {
   const n = crypto.randomInt(0, 10 ** length);
@@ -241,14 +281,59 @@ app.post('/auth/reset-password', async (req, res) => {
 });
 
 app.post('/tasks', async (req, res) => {
-  const { title, description, creator_id } = req.body;
+  const {
+    title,
+    description,
+    creator_id,
+    price,
+    lat,
+    lng,
+    estimated_duration_minutes,
+    start_time,
+    auto_assign_at,
+    address,
+    city_id,
+    county_id,
+    country_id,
+  } = req.body;
+
+  if (!title || !creator_id) {
+    return res.status(400).json({ error: 'title si creator_id sunt obligatorii' });
+  }
 
   try {
+    const startTime = start_time ? new Date(start_time) : new Date();
+    const autoAssignAt = auto_assign_at ? new Date(auto_assign_at) : startTime;
+
     const result = await pool.query(
-      'INSERT INTO tasks (title, description, creator_id) VALUES ($1, $2, $3) RETURNING *',
-      [title, description, creator_id]
+      `INSERT INTO tasks
+         (title, description, creator_id, price, lat, lng,
+          estimated_duration_minutes, start_time, auto_assign_at,
+          address, city_id, county_id, country_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING *`,
+      [
+        title,
+        description || null,
+        creator_id,
+        price || null,
+        lat || null,
+        lng || null,
+        estimated_duration_minutes || null,
+        startTime,
+        autoAssignAt,
+        address || null,
+        city_id || null,
+        county_id || null,
+        country_id || null,
+      ]
     );
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json({
+      ...row,
+      status_label: statusLabels[row.status_id] || 'Necunoscut',
+      location_label: buildLocationLabel(row),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Task insert failed' });
@@ -258,15 +343,261 @@ app.post('/tasks', async (req, res) => {
 app.get('/tasks', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT tasks.*, users.name AS creator_name
+      SELECT tasks.*,
+             users.name AS creator_name,
+             assignee.name AS assigned_name,
+             cities.name AS city_name,
+             counties.name AS county_name,
+             countries.name AS country_name
       FROM tasks
       JOIN users ON users.id = tasks.creator_id
+      LEFT JOIN users assignee ON assignee.id = tasks.assigned_user_id
+      LEFT JOIN cities ON cities.id = tasks.city_id
+      LEFT JOIN counties ON counties.id = tasks.county_id
+      LEFT JOIN countries ON countries.id = tasks.country_id
       ORDER BY tasks.id DESC
     `);
-    res.json(result.rows);
+    res.json(
+      result.rows.map((row) => ({
+        ...row,
+        status_label: statusLabels[row.status_id] || 'Necunoscut',
+        location_label: buildLocationLabel(row),
+      }))
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Fetch tasks failed' });
+  }
+});
+
+app.get('/tasks/my/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const result = await pool.query(
+      `
+      SELECT tasks.*,
+             users.name AS creator_name,
+             assignee.name AS assigned_name,
+             cities.name AS city_name,
+             counties.name AS county_name,
+             countries.name AS country_name
+      FROM tasks
+      JOIN users ON users.id = tasks.creator_id
+      LEFT JOIN users assignee ON assignee.id = tasks.assigned_user_id
+      LEFT JOIN cities ON cities.id = tasks.city_id
+      LEFT JOIN counties ON counties.id = tasks.county_id
+      LEFT JOIN countries ON countries.id = tasks.country_id
+      WHERE tasks.creator_id = $1 OR tasks.assigned_user_id = $1
+      ORDER BY tasks.id DESC
+    `,
+      [userId]
+    );
+    res.json(
+      result.rows.map((row) => ({
+        ...row,
+        status_label: statusLabels[row.status_id] || 'Necunoscut',
+        location_label: buildLocationLabel(row),
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Fetch my tasks failed' });
+  }
+});
+
+app.post('/tasks/:id/accept', async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+  if (!user_id) {
+    return res.status(400).json({ error: 'user_id obligatoriu' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE tasks
+       SET assigned_user_id = $1,
+           status_id = 1
+       WHERE id = $2
+       RETURNING *`,
+      [user_id, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task inexistent' });
+    }
+    const row = await fetchTaskWithLocation(id);
+    res.json({
+      ...row,
+      status_label: statusLabels[row.status_id] || 'Necunoscut',
+      location_label: buildLocationLabel(row),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Accept task failed' });
+  }
+});
+
+app.post('/tasks/:id/refuse', async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+  if (!user_id) {
+    return res.status(400).json({ error: 'user_id obligatoriu' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE tasks
+       SET assigned_user_id = CASE WHEN assigned_user_id = $1 THEN NULL ELSE assigned_user_id END,
+           status_id = 0
+       WHERE id = $2
+       RETURNING *`,
+      [user_id, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task inexistent' });
+    }
+    const row = await fetchTaskWithLocation(id);
+    res.json({
+      ...row,
+      status_label: statusLabels[row.status_id] || 'Necunoscut',
+      location_label: buildLocationLabel(row),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Refuse task failed' });
+  }
+});
+
+app.post('/tasks/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status_id, note } = req.body;
+  if (status_id === undefined || status_id === null) {
+    return res.status(400).json({ error: 'status_id obligatoriu' });
+  }
+
+  if (![0, 1, 2, 3].includes(Number(status_id))) {
+    return res.status(400).json({ error: 'status_id trebuie sa fie 0-3' });
+  }
+
+  try {
+    try {
+      await pool.query(
+        `UPDATE tasks
+         SET status_id = $1,
+             status_note = COALESCE($2, status_note)
+         WHERE id = $3`,
+        [status_id, note || null, id]
+      );
+    } catch (err) {
+      // Fallback if status_note column does not exist
+      if (err.message && err.message.includes('status_note')) {
+        await pool.query(
+          `UPDATE tasks
+           SET status_id = $1
+           WHERE id = $2`,
+          [status_id, id]
+        );
+      } else {
+        throw err;
+      }
+    }
+
+    const row = await fetchTaskWithLocation(id);
+    if (!row) {
+      return res.status(404).json({ error: 'Task inexistent' });
+    }
+
+    res.json({
+      ...row,
+      status_label: statusLabels[row.status_id] || 'Necunoscut',
+      location_label: buildLocationLabel(row),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Update status failed' });
+  }
+});
+
+app.post('/tasks/:id/reviews', async (req, res) => {
+  const { id } = req.params;
+  const { author_id, target_id, rating, comment } = req.body;
+
+  if (!author_id || !target_id || !rating) {
+    return res
+      .status(400)
+      .json({ error: 'author_id, target_id si rating sunt obligatorii' });
+  }
+
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ error: 'Rating invalid (1-5)' });
+  }
+
+  try {
+    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (taskRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Task inexistent' });
+    }
+
+    const authorProfileRes = await pool.query(
+      'SELECT id FROM profile WHERE user_id = $1 LIMIT 1',
+      [author_id]
+    );
+    if (authorProfileRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Profil autor inexistent' });
+    }
+    const authorProfileId = authorProfileRes.rows[0].id;
+
+    const targetProfileRes = await pool.query(
+      'SELECT id, full_name FROM profile WHERE user_id = $1 LIMIT 1',
+      [target_id]
+    );
+    if (targetProfileRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Profil destinatar inexistent' });
+    }
+    const targetProfileId = targetProfileRes.rows[0].id;
+
+    const businessRes = await pool.query(
+      'SELECT id FROM business WHERE owner_profile_id = $1 LIMIT 1',
+      [targetProfileId]
+    );
+    if (businessRes.rows.length === 0) {
+      return res
+          .status(400)
+          .json({ error: 'Destinatarul nu are business asociat pentru review.' });
+    }
+    const businessId = businessRes.rows[0].id;
+
+    const result = await pool.query(
+      `INSERT INTO reviews (business_id, author_profile_id, rating, title, body, task_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [businessId, authorProfileId, rating, null, comment || null, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Review save failed' });
+  }
+});
+
+app.get('/tasks/:id/reviews', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT r.*, 
+              pa.full_name AS author_name,
+              pb.full_name AS target_name
+       FROM reviews r
+       LEFT JOIN profile pa ON pa.id = r.author_profile_id
+       LEFT JOIN business b ON b.id = r.business_id
+       LEFT JOIN profile pb ON pb.id = b.owner_profile_id
+       WHERE r.task_id = $1
+       ORDER BY r.id DESC`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Fetch reviews failed' });
   }
 });
 

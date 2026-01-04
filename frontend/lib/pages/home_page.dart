@@ -8,6 +8,7 @@ import '../state/auth_state.dart';
 import 'messages_page.dart';
 import 'map_page.dart';
 import 'create_task_page.dart';
+import 'my_tasks_page.dart';
 import 'task_detail_page.dart';
 import '../widgets/auth_dialog.dart';
 
@@ -89,7 +90,7 @@ class _HomePageState extends State<HomePage> {
                     break;
                   case 'tasks':
                     Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const MapPage()),
+                      MaterialPageRoute(builder: (_) => const MyTasksPage()),
                     );
                     break;
                   case 'messages':
@@ -196,15 +197,20 @@ class _HomePageState extends State<HomePage> {
     required Task task,
     required bool accept,
   }) async {
+    final auth = AuthState.instance;
+    if (!auth.isAuthenticated || auth.user == null) {
+      await showAuthDialog(context);
+      return;
+    }
     setState(() {
       _loadingActions.add(task.id);
     });
 
     try {
       if (accept) {
-        await acceptTaskApi(task.id);
+        await acceptTaskApi(task.id, userId: auth.user!.id);
       } else {
-        await refuseTaskApi(task.id);
+        await refuseTaskApi(task.id, userId: auth.user!.id);
       }
 
       if (mounted) {
@@ -1108,7 +1114,7 @@ class _TaskTile extends StatelessWidget {
                               size: 16, color: Colors.black54),
                           const SizedBox(width: 4),
                           Text(
-                            task.address,
+                            task.shortAddress,
                             style: const TextStyle(fontSize: 12),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1173,6 +1179,23 @@ class _TaskTile extends StatelessWidget {
               Text(
                 'de ${task.creatorName}',
                 style: const TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.location_on_outlined,
+                      size: 18, color: Colors.deepOrange),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      task.shortAddress,
+                      style: const TextStyle(
+                        color: Colors.deepOrange,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const Spacer(),
               Row(

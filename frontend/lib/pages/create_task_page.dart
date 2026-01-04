@@ -1,6 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+
+import '../api/tasks_api.dart';
+import '../state/auth_state.dart';
 
 class CreateTaskPage extends StatefulWidget {
   const CreateTaskPage({super.key});
@@ -18,13 +25,33 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   final _phoneCtrl = TextEditingController();
   final _cityCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
+  int? _cityId;
+  int? _countyId;
+  int? _countryId;
   String _category = 'Curatenie';
   LatLng _pin = const LatLng(44.4268, 26.1025);
+  bool _isSubmitting = false;
+  bool _isGeocoding = false;
+  Timer? _geocodeDebounce;
 
   final MapController _mapController = MapController();
 
   @override
+  void initState() {
+    super.initState();
+    final user = AuthState.instance.user;
+    if (user != null) {
+      _contactNameCtrl.text = user.name;
+      _emailCtrl.text = user.email;
+      if ((user.phone ?? '').isNotEmpty) {
+        _phoneCtrl.text = user.phone!;
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    _geocodeDebounce?.cancel();
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
@@ -155,6 +182,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       children: [
         TextField(
           controller: _cityCtrl,
+          onChanged: _onAddressChanged,
           decoration: fieldDecoration('Localitate*').copyWith(
             hintText: 'ex: Bucuresti, Sectorul 3',
           ),
@@ -162,6 +190,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         const SizedBox(height: 10),
         TextField(
           controller: _addressCtrl,
+          onChanged: _onAddressChanged,
           decoration: fieldDecoration('Adresa completa').copyWith(
             hintText: 'Strada Exemplu nr. 10, bl. X, ap. 5',
           ),
@@ -185,6 +214,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
                   setState(() {
                     _pin = latLng;
                   });
+                  _reverseGeocode(latLng);
                 },
               ),
               children: [
@@ -207,9 +237,22 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           ),
         ),
         const SizedBox(height: 10),
-        Text(
-          'Apasa pe harta pentru a muta pin-ul. Completeaza manual localitatea/adresa daca vrei.',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+        Row(
+          children: [
+            if (_isGeocoding)
+              const SizedBox(
+                height: 18,
+                width: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            if (_isGeocoding) const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Apasa pe harta pentru a muta pin-ul sau completeaza adresa pentru a-l pozitiona automat.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -232,7 +275,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         const SizedBox(width: 12),
         Expanded(
           child: ElevatedButton(
-            onPressed: () {},
+            onPressed: _isSubmitting ? null : _submit,
             style: ElevatedButton.styleFrom(
               backgroundColor: primaryBlue,
               foregroundColor: Colors.white,
@@ -241,7 +284,16 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Publica task'),
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text('Publica task'),
           ),
         ),
       ],
@@ -293,5 +345,164 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _submit() async {
+    final auth = AuthState.instance;
+    if (!auth.isAuthenticated || auth.user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Autentificati-va pentru a crea un task')),
+      );
+      return;
+    }
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Titlul este obligatoriu')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final price = double.tryParse(_priceCtrl.text.trim());
+      await createTaskApi(
+        title: title,
+        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+        creatorId: auth.user!.id,
+        price: price,
+        lat: _pin.latitude,
+        lng: _pin.longitude,
+        estimatedDurationMinutes: null,
+        startTime: DateTime.now(),
+        address: _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim(),
+        cityId: _cityId,
+        countyId: _countyId,
+        countryId: _countryId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Task creat')),
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Eroare: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  void _onAddressChanged(String _) {
+    _geocodeDebounce?.cancel();
+    _geocodeDebounce = Timer(const Duration(milliseconds: 800), () {
+      _forwardGeocode();
+    });
+  }
+
+  Future<void> _forwardGeocode() async {
+    final city = _cityCtrl.text.trim();
+    final addr = _addressCtrl.text.trim();
+    if (city.isEmpty && addr.isEmpty) return;
+
+    setState(() => _isGeocoding = true);
+    try {
+      final query = [addr, city].where((e) => e.isNotEmpty).join(', ');
+      final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=1');
+      final res = await http.get(
+        uri,
+        headers: {'User-Agent': 'taskul-app/1.0'},
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Geocodare esuata (${res.statusCode})');
+      }
+      final List data = jsonDecode(res.body);
+      if (data.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Nu am gasit locatia pentru adresa.')),
+          );
+        }
+        return;
+      }
+      final lat = double.tryParse(data.first['lat']?.toString() ?? '');
+      final lon = double.tryParse(data.first['lon']?.toString() ?? '');
+      if (lat == null || lon == null) {
+        return;
+      }
+      final newPin = LatLng(lat, lon);
+      if (mounted) {
+        setState(() => _pin = newPin);
+        _mapController.move(newPin, 14);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nu am putut plasa pin-ul pentru adresa.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeocoding = false);
+    }
+  }
+
+  Future<void> _reverseGeocode(LatLng point) async {
+    setState(() => _isGeocoding = true);
+    try {
+      final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?lat=${point.latitude}&lon=${point.longitude}&format=json');
+      final res = await http.get(
+        uri,
+        headers: {'User-Agent': 'taskul-app/1.0'},
+      );
+      if (res.statusCode != 200) return;
+      final data = jsonDecode(res.body);
+      final addr = data['address'] as Map<String, dynamic>?;
+      final display = data['display_name']?.toString();
+
+      String street = '';
+      if (addr != null) {
+        final road = addr['road']?.toString() ?? '';
+        final house = addr['house_number']?.toString() ?? '';
+        if (road.isNotEmpty || house.isNotEmpty) {
+          street = [road, house].where((e) => e.isNotEmpty).join(' ');
+        }
+      }
+      final cityCandidate = addr?['city']?.toString() ??
+          addr?['town']?.toString() ??
+          addr?['village']?.toString() ??
+          addr?['municipality']?.toString() ??
+          addr?['county']?.toString() ??
+          '';
+      final state = addr?['state']?.toString() ?? '';
+      final postcode = addr?['postcode']?.toString() ?? '';
+      final country = addr?['country']?.toString() ?? '';
+
+      final fullAddressParts = [
+        if (street.isNotEmpty) street,
+        if (cityCandidate.isNotEmpty) cityCandidate,
+        if (state.isNotEmpty) state,
+        if (postcode.isNotEmpty) postcode,
+        if (country.isNotEmpty) country,
+      ];
+      final fullAddress = fullAddressParts.isNotEmpty
+          ? fullAddressParts.join(', ')
+          : (display ?? '');
+
+      if (mounted) {
+        _addressCtrl.text = fullAddress;
+        if (cityCandidate.isNotEmpty) {
+          _cityCtrl.text = cityCandidate;
+        }
+      }
+    } catch (_) {
+      // swallow errors silently for reverse geocode
+    } finally {
+      if (mounted) setState(() => _isGeocoding = false);
+    }
   }
 }
