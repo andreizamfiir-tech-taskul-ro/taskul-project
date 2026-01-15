@@ -27,6 +27,8 @@ const statusLabels = {
   1: 'Acceptat',
   2: 'In desfasurare',
   3: 'Finalizat',
+  4: 'Anulat',
+  5: 'Expirat',
 };
 
 async function fetchTaskWithLocation(taskId) {
@@ -154,13 +156,32 @@ async function createUser({ name, email, password, phone }) {
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const result = await pool.query(
-    `INSERT INTO users (name, email, password_hash, phone)
-     VALUES ($1, $2, $3, $4)
-     RETURNING *`,
-    [name, normalizedEmail, passwordHash, phone || null]
-  );
-  return result.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `INSERT INTO users (name, email, password_hash, phone)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [name, normalizedEmail, passwordHash, phone || null]
+    );
+    const user = result.rows[0];
+
+    await client.query(
+      `INSERT INTO profile (user_id, full_name, email, phone, created_at, updated_at, rtg_avg)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), 0)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [user.id, user.name, user.email, user.phone || null]
+    );
+
+    await client.query('COMMIT');
+    return user;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 app.post('/users', async (req, res) => {
@@ -474,8 +495,8 @@ app.post('/tasks/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'status_id obligatoriu' });
   }
 
-  if (![0, 1, 2, 3].includes(Number(status_id))) {
-    return res.status(400).json({ error: 'status_id trebuie sa fie 0-3' });
+  if (![0, 1, 2, 3, 4, 5].includes(Number(status_id))) {
+    return res.status(400).json({ error: 'status_id trebuie sa fie 0-5' });
   }
 
   try {
@@ -521,10 +542,10 @@ app.post('/tasks/:id/reviews', async (req, res) => {
   const { id } = req.params;
   const { author_id, target_id, rating, comment } = req.body;
 
-  if (!author_id || !target_id || !rating) {
+  if (!author_id || !rating) {
     return res
       .status(400)
-      .json({ error: 'author_id, target_id si rating sunt obligatorii' });
+      .json({ error: 'author_id si rating sunt obligatorii' });
   }
 
   if (rating < 1 || rating > 5) {
@@ -532,48 +553,56 @@ app.post('/tasks/:id/reviews', async (req, res) => {
   }
 
   try {
-    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    const taskRes = await pool.query(
+      'SELECT id, creator_id, assigned_user_id, status_id FROM tasks WHERE id = $1',
+      [id]
+    );
     if (taskRes.rows.length === 0) {
       return res.status(404).json({ error: 'Task inexistent' });
     }
+    const task = taskRes.rows[0];
 
-    const authorProfileRes = await pool.query(
-      'SELECT id FROM profile WHERE user_id = $1 LIMIT 1',
-      [author_id]
-    );
-    if (authorProfileRes.rows.length === 0) {
-      return res.status(400).json({ error: 'Profil autor inexistent' });
+    if (Number(task.status_id) !== 3) {
+      return res.status(400).json({ error: 'Taskul nu este finalizat' });
     }
-    const authorProfileId = authorProfileRes.rows[0].id;
 
-    const targetProfileRes = await pool.query(
-      'SELECT id, full_name FROM profile WHERE user_id = $1 LIMIT 1',
-      [target_id]
-    );
-    if (targetProfileRes.rows.length === 0) {
-      return res.status(400).json({ error: 'Profil destinatar inexistent' });
+    if (!task.assigned_user_id) {
+      return res.status(400).json({ error: 'Taskul nu are executant asignat' });
     }
-    const targetProfileId = targetProfileRes.rows[0].id;
 
-    const businessRes = await pool.query(
-      'SELECT id FROM business WHERE owner_profile_id = $1 LIMIT 1',
-      [targetProfileId]
-    );
-    if (businessRes.rows.length === 0) {
-      return res
-          .status(400)
-          .json({ error: 'Destinatarul nu are business asociat pentru review.' });
+    if (Number(author_id) !== Number(task.creator_id)) {
+      return res.status(403).json({ error: 'Doar creatorul poate lasa review' });
     }
-    const businessId = businessRes.rows[0].id;
+
+    if (target_id && Number(target_id) !== Number(task.assigned_user_id)) {
+      return res.status(400).json({ error: 'Destinatar invalid pentru acest task' });
+    }
 
     const result = await pool.query(
-      `INSERT INTO reviews (business_id, author_profile_id, rating, title, body, task_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO task_reviews (task_id, author_id, target_id, rating, comment)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [businessId, authorProfileId, rating, null, comment || null, id]
+      [id, author_id, task.assigned_user_id, rating, comment || null]
     );
+
+    const avgRes = await pool.query(
+      `SELECT COALESCE(AVG(rating), 0) AS avg_rating
+       FROM task_reviews
+       WHERE target_id = $1`,
+      [task.assigned_user_id]
+    );
+    await pool.query(
+      `UPDATE profile
+       SET rtg_avg = $1
+       WHERE user_id = $2`,
+      [avgRes.rows[0].avg_rating, task.assigned_user_id]
+    );
+
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Review deja trimis pentru acest task' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Review save failed' });
   }
@@ -583,15 +612,14 @@ app.get('/tasks/:id/reviews', async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      `SELECT r.*, 
+      `SELECT tr.*,
               pa.full_name AS author_name,
-              pb.full_name AS target_name
-       FROM reviews r
-       LEFT JOIN profile pa ON pa.id = r.author_profile_id
-       LEFT JOIN business b ON b.id = r.business_id
-       LEFT JOIN profile pb ON pb.id = b.owner_profile_id
-       WHERE r.task_id = $1
-       ORDER BY r.id DESC`,
+              pt.full_name AS target_name
+       FROM task_reviews tr
+       LEFT JOIN profile pa ON pa.user_id = tr.author_id
+       LEFT JOIN profile pt ON pt.user_id = tr.target_id
+       WHERE tr.task_id = $1
+       ORDER BY tr.id DESC`,
       [id]
     );
     res.json(result.rows);

@@ -153,12 +153,32 @@ class _MyTasksPageState extends State<MyTasksPage> {
   Future<void> _handleReview(Task task, int rating, String? comment) async {
     final user = AuthState.instance.user;
     if (user == null) return;
-    final targetId = user.id == task.creatorId ? (task.assignedUserId ?? 0) : task.creatorId;
+    if (user.id != task.creatorId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Doar creatorul poate lasa review.')),
+      );
+      return;
+    }
+    final targetId = task.assignedUserId ?? 0;
     if (targetId == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nu exista destinatar pentru review.')),
       );
       return;
+    }
+    try {
+      final existing = await fetchTaskReviews(task.id);
+      final alreadyReviewed = existing.any((r) => r.authorId == user.id);
+      if (alreadyReviewed) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Ai trimis deja un review.')),
+          );
+        }
+        return;
+      }
+    } catch (_) {
+      // If we cannot load reviews, we still allow submit and let backend decide.
     }
     setState(() => _isUpdating = true);
     try {
@@ -402,7 +422,7 @@ class _TaskTile extends StatelessWidget {
       );
     }
 
-    if (task.statusId == 3 && (isAssignee || isCreator)) {
+    if (task.statusId == 3 && isCreator && task.assignedUserId != null) {
       return Padding(
         padding: const EdgeInsets.only(top: 8),
         child: OutlinedButton(

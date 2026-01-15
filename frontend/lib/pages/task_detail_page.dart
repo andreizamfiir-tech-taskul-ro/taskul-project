@@ -19,6 +19,21 @@ class TaskDetailPage extends StatefulWidget {
 class _TaskDetailPageState extends State<TaskDetailPage> {
   bool _isActionLoading = false;
   late Future<List<TaskReview>> _futureReviews;
+  final TextEditingController _reviewController = TextEditingController();
+  bool _isSubmittingReview = false;
+  int _rating = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureReviews = fetchTaskReviews(widget.task.id);
+  }
+
+  @override
+  void dispose() {
+    _reviewController.dispose();
+    super.dispose();
+  }
 
   Future<void> _handleAction(bool accept) async {
     final auth = AuthState.instance;
@@ -71,46 +86,128 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
     return '$h:$m';
   }
 
+  Future<void> _submitReview({required int targetId}) async {
+    final auth = AuthState.instance;
+    if (!auth.isAuthenticated || auth.user == null) {
+      await showAuthDialog(context);
+      return;
+    }
+    final userId = auth.user!.id;
+    if (userId != widget.task.creatorId ||
+        widget.task.statusId != 3 ||
+        widget.task.assignedUserId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nu ai dreptul sa lasi review la acest task.'),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() {
+      _isSubmittingReview = true;
+    });
+    try {
+      await createTaskReview(
+        taskId: widget.task.id,
+        authorId: userId,
+        targetId: targetId,
+        rating: _rating,
+        comment: _reviewController.text.trim().isEmpty
+            ? null
+            : _reviewController.text.trim(),
+      );
+      _reviewController.clear();
+      setState(() {
+        _futureReviews = fetchTaskReviews(widget.task.id);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Review trimis')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Nu am putut salva review-ul: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingReview = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
-    _futureReviews = fetchTaskReviews(task.id);
+    final auth = AuthState.instance;
+    return AnimatedBuilder(
+      animation: auth,
+      builder: (context, _) {
+        final userId = auth.user?.id;
+        final canReview = userId != null &&
+            userId == task.creatorId &&
+            task.assignedUserId != null &&
+            task.statusId == 3;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
-      appBar: AppBar(
-        elevation: 0.5,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
-        title: const Text('Detalii task'),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _HeaderCard(task: task, onTapAddress: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => MapPage(focusTask: task),
+        return Scaffold(
+          backgroundColor: const Color(0xFFF6F7FB),
+          appBar: AppBar(
+            elevation: 0.5,
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black87,
+            title: const Text('Detalii task'),
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _HeaderCard(task: task, onTapAddress: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MapPage(focusTask: task),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+                if (task.images.isNotEmpty) _Gallery(images: task.images),
+                const SizedBox(height: 12),
+                _InfoGrid(task: task),
+                const SizedBox(height: 16),
+                _ReviewsSection(
+                  future: _futureReviews,
+                  canReview: canReview,
+                  currentUserId: userId,
+                  targetName: task.assignedName,
+                  onSubmit: task.assignedUserId == null
+                      ? null
+                      : () => _submitReview(targetId: task.assignedUserId!),
+                  reviewController: _reviewController,
+                  rating: _rating,
+                  isSubmitting: _isSubmittingReview,
+                  onRatingChanged: (value) {
+                    setState(() {
+                      _rating = value;
+                    });
+                  },
                 ),
-              );
-            }),
-            const SizedBox(height: 12),
-            if (task.images.isNotEmpty) _Gallery(images: task.images),
-            const SizedBox(height: 12),
-            _InfoGrid(task: task),
-            const SizedBox(height: 16),
-            _ReviewsSection(future: _futureReviews),
-            const SizedBox(height: 16),
-            _ActionRow(
-              isLoading: _isActionLoading,
-              onAccept: () => _handleAction(true),
-              onRefuse: () => _handleAction(false),
+                const SizedBox(height: 16),
+                _ActionRow(
+                  isLoading: _isActionLoading,
+                  onAccept: () => _handleAction(true),
+                  onRefuse: () => _handleAction(false),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -315,8 +412,26 @@ class _Gallery extends StatelessWidget {
 
 class _ReviewsSection extends StatelessWidget {
   final Future<List<TaskReview>> future;
+  final bool canReview;
+  final int? currentUserId;
+  final String? targetName;
+  final VoidCallback? onSubmit;
+  final TextEditingController reviewController;
+  final int rating;
+  final bool isSubmitting;
+  final ValueChanged<int> onRatingChanged;
 
-  const _ReviewsSection({required this.future});
+  const _ReviewsSection({
+    required this.future,
+    required this.canReview,
+    required this.currentUserId,
+    required this.targetName,
+    required this.onSubmit,
+    required this.reviewController,
+    required this.rating,
+    required this.isSubmitting,
+    required this.onRatingChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -330,71 +445,186 @@ class _ReviewsSection extends StatelessWidget {
           return const SizedBox.shrink();
         }
         final reviews = snapshot.data ?? [];
-        if (reviews.isEmpty) {
-          return const SizedBox.shrink();
-        }
+        final hasReviewed = currentUserId != null &&
+            reviews.any((r) => r.authorId == currentUserId);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Review-uri',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            ...reviews.map(
-              (r) => Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          '★' * r.rating,
-                          style: const TextStyle(
-                            color: Colors.amber,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          r.authorName ?? 'Utilizator',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        const Spacer(),
-                        if (r.createdAt != null)
+            if (reviews.isNotEmpty) ...[
+              const Text(
+                'Review-uri',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              ...reviews.map(
+                (r) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
                           Text(
-                            r.createdAt!.toLocal().toString().split('.').first,
+                            '?.' * r.rating,
                             style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.black54,
+                              color: Colors.amber,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          Text(
+                            r.authorName ?? 'Utilizator',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          if (r.createdAt != null)
+                            Text(
+                              r.createdAt!.toLocal().toString().split('.').first,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                        ],
+                      ),
+                      if ((r.comment ?? '').isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(r.comment!),
                       ],
-                    ),
-                    if ((r.comment ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(r.comment!),
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
+            if (canReview && !hasReviewed) ...[
+              const SizedBox(height: 8),
+              _ReviewComposer(
+                targetName: targetName,
+                controller: reviewController,
+                rating: rating,
+                isSubmitting: isSubmitting,
+                onRatingChanged: onRatingChanged,
+                onSubmit: onSubmit,
+              ),
+            ],
+            if (canReview && hasReviewed)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'Ai trimis deja un review pentru acest task.',
+                  style: TextStyle(color: Colors.black54),
+                ),
+              ),
           ],
         );
       },
+    );
+  }
+}
+
+class _ReviewComposer extends StatelessWidget {
+  final String? targetName;
+  final TextEditingController controller;
+  final int rating;
+  final bool isSubmitting;
+  final ValueChanged<int> onRatingChanged;
+  final VoidCallback? onSubmit;
+
+  const _ReviewComposer({
+    required this.targetName,
+    required this.controller,
+    required this.rating,
+    required this.isSubmitting,
+    required this.onRatingChanged,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = targetName ?? 'executant';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Lasa un review pentru $name',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: List.generate(
+              5,
+              (index) {
+                final value = index + 1;
+                return IconButton(
+                  onPressed: isSubmitting ? null : () => onRatingChanged(value),
+                  icon: Icon(
+                    value <= rating ? Icons.star : Icons.star_border,
+                    color: Colors.amber,
+                  ),
+                );
+              },
+            ),
+          ),
+          TextField(
+            controller: controller,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              hintText: 'Scrie un comentariu (optional)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: isSubmitting ? null : onSubmit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.indigo,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: isSubmitting
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text('Trimite review'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

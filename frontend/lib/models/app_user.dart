@@ -52,4 +52,16 @@ class AppUser {
       phoneVerifiedAt: phoneVerifiedAt ?? this.phoneVerifiedAt,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'email': email,
+      'created_at': createdAt?.toIso8601String(),
+      'phone': phone,
+      'email_verified_at': emailVerifiedAt?.toIso8601String(),
+      'phone_verified_at': phoneVerifiedAt?.toIso8601String(),
+    };
+  }
 }

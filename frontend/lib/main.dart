@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+
+import 'state/auth_state.dart';
 import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/create_task_page.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AuthState.instance.restoreSession();
   runApp(const MyApp());
 }
 
