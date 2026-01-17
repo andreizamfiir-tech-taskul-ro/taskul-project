@@ -50,6 +50,11 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  bool _isOwnTask(Task task) {
+    final userId = AuthState.instance.user?.id;
+    return userId != null && task.creatorId == userId;
+  }
+
   Widget _buildAuthAction(Color primaryBlue, {bool compact = false}) {
     final auth = AuthState.instance;
 
@@ -200,6 +205,16 @@ class _HomePageState extends State<HomePage> {
     final auth = AuthState.instance;
     if (!auth.isAuthenticated || auth.user == null) {
       await showAuthDialog(context);
+      return;
+    }
+    if (_isOwnTask(task)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nu poti accepta sau refuza propriul tau task.'),
+          ),
+        );
+      }
       return;
     }
     setState(() {
@@ -715,6 +730,7 @@ class _HomePageState extends State<HomePage> {
               (context, index) {
                 final task = tasks[index];
                 final isLoading = _loadingActions.contains(task.id);
+                final isOwnTask = _isOwnTask(task);
                 return _TaskTile(
                   task: task,
                   isLoading: isLoading,
@@ -723,6 +739,7 @@ class _HomePageState extends State<HomePage> {
                   onViewDetails: () => _openTaskDetails(task),
                   onViewOnMap: () => _showTaskOnMap(task),
                   primaryBlue: primaryBlue,
+                  isOwnTask: isOwnTask,
                 );
               },
               childCount: tasks.length,
@@ -1027,6 +1044,7 @@ class _CategoryItem {
 class _TaskTile extends StatelessWidget {
   final Task task;
   final bool isLoading;
+  final bool isOwnTask;
   final VoidCallback onAccept;
   final VoidCallback onRefuse;
   final VoidCallback onViewDetails;
@@ -1036,6 +1054,7 @@ class _TaskTile extends StatelessWidget {
   const _TaskTile({
     required this.task,
     required this.isLoading,
+    required this.isOwnTask,
     required this.onAccept,
     required this.onRefuse,
     required this.onViewDetails,
@@ -1233,7 +1252,7 @@ class _TaskTile extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onPressed: isLoading ? null : onAccept,
+                    onPressed: isLoading || isOwnTask ? null : onAccept,
                     child: isLoading
                         ? const SizedBox(
                             height: 16,
@@ -1251,7 +1270,7 @@ class _TaskTile extends StatelessWidget {
               Row(
                 children: [
                   TextButton(
-                    onPressed: isLoading ? null : onRefuse,
+                    onPressed: isLoading || isOwnTask ? null : onRefuse,
                     child: const Text('Refuza'),
                   ),
                   const SizedBox(width: 4),

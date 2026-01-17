@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../api/tasks_api.dart';
+import '../models/task.dart';
 import '../state/auth_state.dart';
+import 'task_detail_page.dart';
 
 class CreateTaskPage extends StatefulWidget {
   const CreateTaskPage({super.key});
@@ -261,7 +263,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       children: [
         Expanded(
           child: OutlinedButton(
-            onPressed: () {},
+            onPressed: _preview,
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),
               side: BorderSide(color: primaryBlue),
@@ -396,11 +398,89 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     }
   }
 
+  void _preview() {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Titlul este obligatoriu')),
+      );
+      return;
+    }
+
+    final auth = AuthState.instance;
+    final price = double.tryParse(_priceCtrl.text.trim()) ?? 0;
+    final address = _buildAddress();
+    final locationLabel = _buildLocationLabel(address);
+    final conciseAddress = _buildConciseAddress(address, locationLabel);
+    final shortAddress = conciseAddress;
+    final creatorName = _contactNameCtrl.text.trim().isNotEmpty
+        ? _contactNameCtrl.text.trim()
+        : (auth.user?.name ?? 'Tu');
+
+    final task = Task(
+      id: 0,
+      creatorId: auth.user?.id ?? 0,
+      creatorName: creatorName,
+      title: title,
+      price: price,
+      startTime: DateTime.now(),
+      statusLabel: 'Previzualizare',
+      statusId: 0,
+      lat: _pin.latitude,
+      lng: _pin.longitude,
+      address: address,
+      locationLabel: locationLabel,
+      conciseAddress: conciseAddress,
+      shortAddress: shortAddress,
+    );
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TaskDetailPage(task: task, isPreview: true),
+      ),
+    );
+  }
+
   void _onAddressChanged(String _) {
     _geocodeDebounce?.cancel();
     _geocodeDebounce = Timer(const Duration(milliseconds: 800), () {
       _forwardGeocode();
     });
+  }
+
+  String _buildAddress() {
+    final city = _cityCtrl.text.trim();
+    final addr = _addressCtrl.text.trim();
+    final parts = [addr, city].where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return 'Adresa nespecificata';
+    return parts.join(', ');
+  }
+
+  String _buildLocationLabel(String address) {
+    if (address == 'Adresa nespecificata') return 'Romania';
+    final parts = address
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.length >= 2) {
+      return '${parts[parts.length - 2]}, ${parts.last}';
+    }
+    return parts.isNotEmpty ? parts.first : 'Romania';
+  }
+
+  String _buildConciseAddress(String address, String fallback) {
+    if (address == 'Adresa nespecificata') return fallback;
+    final parts = address
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return fallback;
+    if (parts.length >= 2) {
+      return '${parts[0]}, ${parts[1]}';
+    }
+    return parts.first;
   }
 
   Future<void> _forwardGeocode() async {

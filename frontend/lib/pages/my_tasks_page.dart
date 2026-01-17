@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/tasks_api.dart';
 import '../models/task.dart';
+import '../models/task_review.dart';
 import '../state/auth_state.dart';
 import '../widgets/auth_dialog.dart';
 
@@ -15,6 +16,7 @@ class MyTasksPage extends StatefulWidget {
 class _MyTasksPageState extends State<MyTasksPage> {
   Future<List<Task>>? _future;
   bool _isUpdating = false;
+  final Map<int, Future<List<TaskReview>>> _reviewsCache = {};
 
   @override
   void initState() {
@@ -25,6 +27,7 @@ class _MyTasksPageState extends State<MyTasksPage> {
   void _maybeLoad() {
     final user = AuthState.instance.user;
     if (user != null) {
+      _reviewsCache.clear();
       setState(() {
         _future = fetchMyTasks(user.id);
       });
@@ -33,6 +36,26 @@ class _MyTasksPageState extends State<MyTasksPage> {
         _future = null;
       });
     }
+  }
+
+  Future<List<TaskReview>> _getTaskReviews(int taskId) {
+    return _reviewsCache.putIfAbsent(taskId, () => fetchTaskReviews(taskId));
+  }
+
+  Future<TaskReview?> _getReviewForTarget(int taskId, int targetId) async {
+    final reviews = await _getTaskReviews(taskId);
+    for (final review in reviews) {
+      if (review.targetId == targetId) return review;
+    }
+    return null;
+  }
+
+  Future<TaskReview?> _getReviewByAuthor(int taskId, int authorId) async {
+    final reviews = await _getTaskReviews(taskId);
+    for (final review in reviews) {
+      if (review.authorId == authorId) return review;
+    }
+    return null;
   }
 
   @override
@@ -112,6 +135,8 @@ class _MyTasksPageState extends State<MyTasksPage> {
                             currentUserId: user.id,
                             onChangeStatus: _handleChangeStatus,
                             onReview: _handleReview,
+                            getReceivedReview: (task) =>
+                                _getReviewForTarget(task.id, user.id),
                           ),
                           const SizedBox(height: 20),
                           _Section(
@@ -123,6 +148,8 @@ class _MyTasksPageState extends State<MyTasksPage> {
                             currentUserId: user.id,
                             onChangeStatus: _handleChangeStatus,
                             onReview: _handleReview,
+                            getReceivedReview: (task) =>
+                                _getReviewByAuthor(task.id, user.id),
                           ),
                         ],
                       ),
@@ -216,6 +243,7 @@ class _Section extends StatelessWidget {
   final void Function(Task task, int nextStatus, {String? note}) onChangeStatus;
   final void Function(Task task, int rating, String? comment) onReview;
   final int currentUserId;
+  final Future<TaskReview?> Function(Task task)? getReceivedReview;
 
   const _Section({
     required this.title,
@@ -226,6 +254,7 @@ class _Section extends StatelessWidget {
     required this.onChangeStatus,
     required this.onReview,
     required this.currentUserId,
+    required this.getReceivedReview,
   });
 
   @override
@@ -266,6 +295,9 @@ class _Section extends StatelessWidget {
                     currentUserId: currentUserId,
                     onChangeStatus: onChangeStatus,
                     onReview: onReview,
+                    receivedReview: getReceivedReview == null
+                        ? null
+                        : getReceivedReview!(t),
                   ),
                 )
                 .toList(),
@@ -281,12 +313,14 @@ class _TaskTile extends StatelessWidget {
   final int currentUserId;
   final void Function(Task task, int nextStatus, {String? note}) onChangeStatus;
   final void Function(Task task, int rating, String? comment) onReview;
+  final Future<TaskReview?>? receivedReview;
   const _TaskTile({
     required this.task,
     required this.isUpdating,
     required this.currentUserId,
     required this.onChangeStatus,
     required this.onReview,
+    required this.receivedReview,
   });
 
   String _formatTime(DateTime dt) {
@@ -372,10 +406,51 @@ class _TaskTile extends StatelessWidget {
               style: const TextStyle(color: Colors.black54),
             ),
           ],
+          if (receivedReview != null) ...[
+            const SizedBox(height: 8),
+            _buildReceivedReview(),
+          ],
           const SizedBox(height: 8),
           _buildStatusActions(context),
         ],
       ),
+    );
+  }
+
+  Widget _buildReceivedReview() {
+    return FutureBuilder<TaskReview?>(
+      future: receivedReview,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+        final review = snapshot.data;
+        if (review == null) return const SizedBox.shrink();
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.green.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.green.shade100),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Review primit',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              _StarRow(rating: review.rating, size: 16),
+              if ((review.comment ?? '').isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(review.comment!),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -522,6 +597,28 @@ class _TaskTile extends StatelessWidget {
           );
         });
       },
+    );
+  }
+}
+
+class _StarRow extends StatelessWidget {
+  final int rating;
+  final double size;
+
+  const _StarRow({
+    required this.rating,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final count = rating.clamp(0, 5);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(
+        count,
+        (_) => Icon(Icons.star, color: Colors.green, size: size),
+      ),
     );
   }
 }

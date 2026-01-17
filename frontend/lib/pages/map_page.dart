@@ -74,6 +74,16 @@ class MapPageState extends State<MapPage> {
       }
       return;
     }
+    if (task.creatorId == auth.user!.id) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nu poti accepta sau refuza propriul tau task.'),
+          ),
+        );
+      }
+      return;
+    }
     setState(() {
       _isActionLoading = true;
     });
@@ -371,6 +381,7 @@ class _TaskList extends StatelessWidget {
         itemBuilder: (context, index) {
           final task = tasks[index];
           final isSelected = selectedTask?.id == task.id;
+          final isOwnTask = task.creatorId == AuthState.instance.user?.id;
           return _TaskListCard(
             task: task,
             isSelected: isSelected,
@@ -380,6 +391,7 @@ class _TaskList extends StatelessWidget {
             onOpenDetails: () => onOpenDetails(task),
             onAccept: () => onAccept(task),
             onRefuse: () => onRefuse(task),
+            isOwnTask: isOwnTask,
             isLoading: isActionLoading && isSelected,
           );
         },
@@ -397,6 +409,7 @@ class _TaskListCard extends StatelessWidget {
   final VoidCallback onOpenDetails;
   final VoidCallback onAccept;
   final VoidCallback onRefuse;
+  final bool isOwnTask;
   final bool isLoading;
 
   const _TaskListCard({
@@ -408,6 +421,7 @@ class _TaskListCard extends StatelessWidget {
     required this.onOpenDetails,
     required this.onAccept,
     required this.onRefuse,
+    required this.isOwnTask,
     required this.isLoading,
   });
 
@@ -536,7 +550,7 @@ class _TaskListCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: isLoading ? null : onRefuse,
+                        onPressed: isLoading || isOwnTask ? null : onRefuse,
                         child: isLoading
                             ? const SizedBox(
                                 height: 16,
@@ -557,7 +571,7 @@ class _TaskListCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: isLoading ? null : onAccept,
+                        onPressed: isLoading || isOwnTask ? null : onAccept,
                         child: isLoading
                             ? const SizedBox(
                                 height: 16,
@@ -611,6 +625,7 @@ class _SelectedTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOwnTask = task.creatorId == AuthState.instance.user?.id;
     return Material(
       elevation: 6,
       borderRadius: BorderRadius.circular(16),
@@ -681,7 +696,7 @@ class _SelectedTaskCard extends StatelessWidget {
                 Row(
                   children: [
                     OutlinedButton(
-                      onPressed: isLoading ? null : () => onAction(false),
+                      onPressed: isLoading || isOwnTask ? null : () => onAction(false),
                       child: isLoading
                           ? const SizedBox(
                               height: 16,
@@ -696,7 +711,7 @@ class _SelectedTaskCard extends StatelessWidget {
                         backgroundColor: primaryBlue,
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: isLoading ? null : () => onAction(true),
+                      onPressed: isLoading || isOwnTask ? null : () => onAction(true),
                       child: isLoading
                           ? const SizedBox(
                               height: 16,
@@ -751,6 +766,7 @@ class _TaskDetailsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOwnTask = task.creatorId == AuthState.instance.user?.id;
     return Container(
       width: 360,
       height: double.infinity,
@@ -837,11 +853,11 @@ class _TaskDetailsPanel extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: onViewDetails,
-                      child: const Text('Vezi detalii complete'),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: onViewDetails,
+                        child: const Text('Vezi detalii complete'),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -853,7 +869,7 @@ class _TaskDetailsPanel extends StatelessWidget {
                             backgroundColor: primaryBlue,
                             foregroundColor: Colors.white,
                           ),
-                          onPressed: isLoading ? null : () => onAction(true),
+                          onPressed: isLoading || isOwnTask ? null : () => onAction(true),
                           child: isLoading
                               ? const SizedBox(
                                   height: 18,
@@ -869,7 +885,7 @@ class _TaskDetailsPanel extends StatelessWidget {
                       const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: isLoading ? null : () => onAction(false),
+                          onPressed: isLoading || isOwnTask ? null : () => onAction(false),
                           child: isLoading
                               ? const SizedBox(
                                   height: 18,

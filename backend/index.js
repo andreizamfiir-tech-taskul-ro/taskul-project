@@ -31,6 +31,154 @@ const statusLabels = {
   5: 'Expirat',
 };
 
+async function resolveProfileId(userId) {
+  const result = await pool.query(
+    'SELECT * FROM profile WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return row.id ?? row.user_id ?? userId;
+}
+
+async function insertNotification(profileId, type, payload) {
+  await pool.query(
+    `INSERT INTO notifications (profile_id, type, payload, is_read, created_at)
+     VALUES ($1, $2, $3, FALSE, NOW())`,
+    [profileId, type, payload]
+  );
+}
+
+async function ensureNotification(profileId, type, payload, key) {
+  const res = await pool.query(
+    `SELECT id FROM notifications
+     WHERE profile_id = $1 AND type = $2
+       AND payload->>'task_id' = $3
+       AND payload->>'kind' = $4
+       AND payload->>'role' = $5
+     LIMIT 1`,
+    [
+      profileId,
+      type,
+      String(key.taskId),
+      key.kind,
+      key.role,
+    ]
+  );
+  if (res.rows.length === 0) {
+    await insertNotification(profileId, type, payload);
+  }
+}
+
+async function createTaskEventNotifications(taskId) {
+  const taskRes = await pool.query(
+    `SELECT tasks.id,
+            tasks.title,
+            tasks.creator_id,
+            tasks.assigned_user_id,
+            u_creator.name AS creator_name,
+            u_assignee.name AS assignee_name
+     FROM tasks
+     LEFT JOIN users u_creator ON u_creator.id = tasks.creator_id
+     LEFT JOIN users u_assignee ON u_assignee.id = tasks.assigned_user_id
+     WHERE tasks.id = $1
+     LIMIT 1`,
+    [taskId]
+  );
+  if (taskRes.rows.length === 0) return;
+  const task = taskRes.rows[0];
+  if (!task.assigned_user_id) return;
+
+  const creatorProfileId = await resolveProfileId(task.creator_id);
+  const assigneeProfileId = await resolveProfileId(task.assigned_user_id);
+
+  if (creatorProfileId) {
+    await insertNotification(creatorProfileId, 'task_accepted', {
+      task_id: task.id,
+      title: task.title,
+      assignee_id: task.assigned_user_id,
+      assignee_name: task.assignee_name || null,
+    });
+  }
+
+  if (assigneeProfileId) {
+    await insertNotification(assigneeProfileId, 'task_assigned', {
+      task_id: task.id,
+      title: task.title,
+      creator_id: task.creator_id,
+      creator_name: task.creator_name || null,
+    });
+  }
+}
+
+async function createReminderNotifications() {
+  const reminderWindows = [
+    { kind: '1h', min: 55, max: 60 },
+    { kind: '45m', min: 40, max: 45 },
+  ];
+
+  for (const window of reminderWindows) {
+    const tasksRes = await pool.query(
+      `SELECT id, title, creator_id, assigned_user_id, start_time
+       FROM tasks
+       WHERE start_time BETWEEN NOW() + INTERVAL '${window.min} minutes'
+                         AND NOW() + INTERVAL '${window.max} minutes'`,
+    );
+
+    for (const task of tasksRes.rows) {
+      if (task.assigned_user_id) {
+        const assigneeProfileId = await resolveProfileId(task.assigned_user_id);
+        if (assigneeProfileId) {
+          await ensureNotification(
+            assigneeProfileId,
+            'task_reminder',
+            {
+              task_id: task.id,
+              title: task.title,
+              kind: window.kind,
+              role: 'assignee',
+              start_time: task.start_time,
+            },
+            { taskId: task.id, kind: window.kind, role: 'assignee' }
+          );
+        }
+
+        const creatorProfileId = await resolveProfileId(task.creator_id);
+        if (creatorProfileId) {
+          await ensureNotification(
+            creatorProfileId,
+            'task_reminder',
+            {
+              task_id: task.id,
+              title: task.title,
+              kind: window.kind,
+              role: 'creator',
+              start_time: task.start_time,
+            },
+            { taskId: task.id, kind: window.kind, role: 'creator' }
+          );
+        }
+      } else if (window.kind === '1h') {
+        const creatorProfileId = await resolveProfileId(task.creator_id);
+        if (creatorProfileId) {
+          await ensureNotification(
+            creatorProfileId,
+            'task_unassigned_warning',
+            {
+              task_id: task.id,
+              title: task.title,
+              kind: window.kind,
+              role: 'creator',
+              start_time: task.start_time,
+            },
+            { taskId: task.id, kind: window.kind, role: 'creator' }
+          );
+        }
+      }
+    }
+  }
+}
+
 async function fetchTaskWithLocation(taskId) {
   const result = await pool.query(
     `
@@ -271,6 +419,227 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
+app.get('/business/:userId', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM business WHERE owner_profile_id = $1 LIMIT 1',
+      [profileId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Business inexistent' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Fetch business failed' });
+  }
+});
+
+app.get('/notifications/:userId/unread-count', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+    const result = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM notifications WHERE profile_id = $1 AND is_read = FALSE',
+      [profileId]
+    );
+    res.json({ count: result.rows[0]?.count ?? 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Fetch notifications failed' });
+  }
+});
+
+app.get('/notifications/:userId', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+    const result = await pool.query(
+      `SELECT id, profile_id, type, payload, is_read, created_at
+       FROM notifications
+       WHERE profile_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [profileId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Fetch notifications failed' });
+  }
+});
+
+app.post('/notifications/:userId/mark-read', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+    await pool.query(
+      `UPDATE notifications
+       SET is_read = TRUE
+       WHERE profile_id = $1`,
+      [profileId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Mark read failed' });
+  }
+});
+
+app.post('/notifications/:userId/:notificationId/read', async (req, res) => {
+  const userId = Number(req.params.userId);
+  const notificationId = Number(req.params.notificationId);
+  if (!userId || !notificationId) {
+    return res.status(400).json({ error: 'userId sau notificationId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+    await pool.query(
+      `UPDATE notifications
+       SET is_read = TRUE
+       WHERE id = $1 AND profile_id = $2`,
+      [notificationId, profileId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Mark read failed' });
+  }
+});
+
+app.delete('/business/:userId', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId invalid' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(userId);
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+
+    await pool.query('DELETE FROM business WHERE owner_profile_id = $1', [
+      profileId,
+    ]);
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Delete business failed' });
+  }
+});
+
+app.post('/business', async (req, res) => {
+  const {
+    user_id,
+    category_id,
+    name,
+    description,
+    address,
+    city,
+    country,
+    website,
+    email,
+    phone,
+  } = req.body;
+
+  if (!user_id || !name) {
+    return res.status(400).json({ error: 'user_id si name sunt obligatorii' });
+  }
+
+  try {
+    const profileId = await resolveProfileId(Number(user_id));
+    if (!profileId) {
+      return res.status(404).json({ error: 'Profil inexistent' });
+    }
+
+    const existing = await pool.query(
+      'SELECT id FROM business WHERE owner_profile_id = $1 LIMIT 1',
+      [profileId]
+    );
+
+    const values = [
+      profileId,
+      category_id ?? null,
+      name,
+      description || null,
+      address || null,
+      city || null,
+      country || null,
+      website || null,
+      email || null,
+      phone || null,
+    ];
+
+    if (existing.rows.length > 0) {
+      const updateRes = await pool.query(
+        `UPDATE business
+         SET category_id = $2,
+             name = $3,
+             description = $4,
+             address = $5,
+             city = $6,
+             country = $7,
+             website = $8,
+             email = $9,
+             phone = $10,
+             updated_at = NOW()
+         WHERE owner_profile_id = $1
+         RETURNING *`,
+        values
+      );
+      return res.json(updateRes.rows[0]);
+    }
+
+    const insertRes = await pool.query(
+      `INSERT INTO business
+       (owner_profile_id, category_id, name, description, address, city, country, website, email, phone, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       RETURNING *`,
+      values
+    );
+    return res.json(insertRes.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Save business failed' });
+  }
+});
+
 // Dev helper: reset parola pentru un email (overwrite hash)
 app.post('/auth/reset-password', async (req, res) => {
   const { email, password } = req.body;
@@ -450,6 +819,10 @@ app.post('/tasks/:id/accept', async (req, res) => {
       ...row,
       status_label: statusLabels[row.status_id] || 'Necunoscut',
       location_label: buildLocationLabel(row),
+    });
+
+    createTaskEventNotifications(id).catch((err) => {
+      console.error('Notification error:', err);
     });
   } catch (err) {
     console.error(err);
@@ -645,6 +1018,16 @@ app.get('/', async (req, res) => {
 
 app.listen(3000, () => {
   console.log('Server running on http://localhost:3000');
+});
+
+const NOTIFICATION_INTERVAL_MS = 5 * 60 * 1000;
+setInterval(() => {
+  createReminderNotifications().catch((err) => {
+    console.error('Reminder notifications error:', err);
+  });
+}, NOTIFICATION_INTERVAL_MS);
+createReminderNotifications().catch((err) => {
+  console.error('Reminder notifications error:', err);
 });
 
 /**

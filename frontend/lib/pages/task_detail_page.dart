@@ -9,8 +9,13 @@ import 'map_page.dart';
 
 class TaskDetailPage extends StatefulWidget {
   final Task task;
+  final bool isPreview;
 
-  const TaskDetailPage({super.key, required this.task});
+  const TaskDetailPage({
+    super.key,
+    required this.task,
+    this.isPreview = false,
+  });
 
   @override
   State<TaskDetailPage> createState() => _TaskDetailPageState();
@@ -36,10 +41,21 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
   }
 
   Future<void> _handleAction(bool accept) async {
+    if (widget.isPreview) return;
     final auth = AuthState.instance;
     if (!auth.isAuthenticated || auth.user == null) {
       if (mounted) {
         await showAuthDialog(context);
+      }
+      return;
+    }
+    if (auth.user!.id == widget.task.creatorId) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nu poti accepta sau refuza propriul tau task.'),
+          ),
+        );
       }
       return;
     }
@@ -154,6 +170,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
             userId == task.creatorId &&
             task.assignedUserId != null &&
             task.statusId == 3;
+        final isOwnTask = userId != null && task.creatorId == userId;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF6F7FB),
@@ -161,7 +178,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
             elevation: 0.5,
             backgroundColor: Colors.white,
             foregroundColor: Colors.black87,
-            title: const Text('Detalii task'),
+            title: Text(widget.isPreview ? 'Previzualizare task' : 'Detalii task'),
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -179,30 +196,33 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                 if (task.images.isNotEmpty) _Gallery(images: task.images),
                 const SizedBox(height: 12),
                 _InfoGrid(task: task),
-                const SizedBox(height: 16),
-                _ReviewsSection(
-                  future: _futureReviews,
-                  canReview: canReview,
-                  currentUserId: userId,
-                  targetName: task.assignedName,
-                  onSubmit: task.assignedUserId == null
-                      ? null
-                      : () => _submitReview(targetId: task.assignedUserId!),
-                  reviewController: _reviewController,
-                  rating: _rating,
-                  isSubmitting: _isSubmittingReview,
-                  onRatingChanged: (value) {
-                    setState(() {
-                      _rating = value;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
+                if (!widget.isPreview) ...[
+                  const SizedBox(height: 16),
+                  _ReviewsSection(
+                    future: _futureReviews,
+                    canReview: canReview,
+                    currentUserId: userId,
+                    targetName: task.assignedName,
+                    onSubmit: task.assignedUserId == null
+                        ? null
+                        : () => _submitReview(targetId: task.assignedUserId!),
+                    reviewController: _reviewController,
+                    rating: _rating,
+                    isSubmitting: _isSubmittingReview,
+                    onRatingChanged: (value) {
+                      setState(() {
+                        _rating = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
                 _ActionRow(
                   isLoading: _isActionLoading,
                   onAccept: () => _handleAction(true),
                   onRefuse: () => _handleAction(false),
+                  isOwnTask: isOwnTask,
                 ),
+                ],
               ],
             ),
           ),
@@ -445,8 +465,13 @@ class _ReviewsSection extends StatelessWidget {
           return const SizedBox.shrink();
         }
         final reviews = snapshot.data ?? [];
-        final hasReviewed = currentUserId != null &&
-            reviews.any((r) => r.authorId == currentUserId);
+        final userReview = currentUserId == null
+            ? null
+            : reviews.cast<TaskReview?>().firstWhere(
+                (r) => r != null && r.authorId == currentUserId,
+                orElse: () => null,
+              );
+        final hasReviewed = userReview != null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -476,13 +501,7 @@ class _ReviewsSection extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Text(
-                            '?.' * r.rating,
-                            style: const TextStyle(
-                              color: Colors.amber,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                          _StarRow(rating: r.rating, size: 16),
                           const SizedBox(width: 8),
                           Text(
                             r.authorName ?? 'Utilizator',
@@ -520,11 +539,37 @@ class _ReviewsSection extends StatelessWidget {
               ),
             ],
             if (canReview && hasReviewed)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text(
-                  'Ai trimis deja un review pentru acest task.',
-                  style: TextStyle(color: Colors.black54),
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Review-ul tau',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 6),
+                      _StarRow(rating: userReview!.rating, size: 18),
+                      if ((userReview.comment ?? '').isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(userReview.comment!),
+                      ],
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -629,6 +674,28 @@ class _ReviewComposer extends StatelessWidget {
   }
 }
 
+class _StarRow extends StatelessWidget {
+  final int rating;
+  final double size;
+
+  const _StarRow({
+    required this.rating,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final count = rating.clamp(0, 5);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(
+        count,
+        (_) => Icon(Icons.star, color: Colors.green, size: size),
+      ),
+    );
+  }
+}
+
 class _InfoGrid extends StatelessWidget {
   final Task task;
 
@@ -692,11 +759,13 @@ class _ActionRow extends StatelessWidget {
   final bool isLoading;
   final VoidCallback onAccept;
   final VoidCallback onRefuse;
+  final bool isOwnTask;
 
   const _ActionRow({
     required this.isLoading,
     required this.onAccept,
     required this.onRefuse,
+    required this.isOwnTask,
   });
 
   @override
@@ -716,8 +785,8 @@ class _ActionRow extends StatelessWidget {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-            ),
-            onPressed: isLoading ? null : onAccept,
+          ),
+            onPressed: isLoading || isOwnTask ? null : onAccept,
             child: isLoading
                 ? const SizedBox(
                     height: 18,
@@ -741,7 +810,7 @@ class _ActionRow extends StatelessWidget {
               ),
               foregroundColor: Colors.deepPurple,
             ),
-            onPressed: isLoading ? null : onRefuse,
+            onPressed: isLoading || isOwnTask ? null : onRefuse,
             child: isLoading
                 ? const SizedBox(
                     height: 18,
