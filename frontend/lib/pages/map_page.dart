@@ -74,6 +74,16 @@ class MapPageState extends State<MapPage> {
       }
       return;
     }
+    if (!_canRespondToTask(task, auth.user!.id)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Task-ul nu mai poate fi acceptat/refuzat.'),
+          ),
+        );
+      }
+      return;
+    }
     if (task.creatorId == auth.user!.id) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -127,9 +137,15 @@ class MapPageState extends State<MapPage> {
     return '$h:$m';
   }
 
+  bool _canRespondToTask(Task task, int userId) {
+    if (task.creatorId == userId) return false;
+    return task.statusId == 0 && task.assignedUserId == null;
+  }
+
   @override
   Widget build(BuildContext context) {
     const primaryBlue = Color(0xFF0040FF);
+    final userId = AuthState.instance.user?.id;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7FB),
@@ -176,7 +192,14 @@ class MapPageState extends State<MapPage> {
             return Center(child: Text('Eroare: ${snapshot.error}'));
           }
 
-          tasks = snapshot.data ?? [];
+          tasks = (snapshot.data ?? [])
+              .where((task) => task.statusId != 3)
+              .toList();
+          if (selectedTask != null && selectedTask!.statusId == 3) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => selectedTask = null);
+            });
+          }
 
           if (_pendingFocusTask != null) {
             final pending = _pendingFocusTask!;
@@ -206,6 +229,7 @@ class MapPageState extends State<MapPage> {
                                 height: mapHeight,
                                 primaryBlue: primaryBlue,
                                 isMobile: true,
+                                userId: userId,
                               ),
                               const SizedBox(height: 12),
                               Expanded(
@@ -214,13 +238,16 @@ class MapPageState extends State<MapPage> {
                                   selectedTask: selectedTask,
                                   onSelect: _selectTask,
                                   onOpenDetails: _openTaskDetails,
-                                  onAccept: (task) =>
+                                onAccept: (task) =>
                                       _handleAction(task, true),
                                   onRefuse: (task) =>
                                       _handleAction(task, false),
                                   primaryBlue: primaryBlue,
                                   isMobile: true,
                                   isActionLoading: _isActionLoading,
+                                  canRespond: (task) => userId != null
+                                      ? _canRespondToTask(task, userId)
+                                      : false,
                                 ),
                               ),
                             ],
@@ -241,6 +268,9 @@ class MapPageState extends State<MapPage> {
                                   primaryBlue: primaryBlue,
                                   isMobile: false,
                                   isActionLoading: _isActionLoading,
+                                  canRespond: (task) => userId != null
+                                      ? _canRespondToTask(task, userId)
+                                      : false,
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -249,6 +279,7 @@ class MapPageState extends State<MapPage> {
                                   height: mapHeight,
                                   primaryBlue: primaryBlue,
                                   isMobile: false,
+                                  userId: userId,
                                 ),
                               ),
                             ],
@@ -267,6 +298,7 @@ class MapPageState extends State<MapPage> {
     required double height,
     required Color primaryBlue,
     required bool isMobile,
+    required int? userId,
   }) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(isMobile ? 16 : 18),
@@ -321,6 +353,9 @@ class MapPageState extends State<MapPage> {
                     onOpenDetails: () => _openTaskDetails(selectedTask!),
                     onAction: (accept) => _handleAction(selectedTask!, accept),
                     isLoading: _isActionLoading,
+                    canRespond: userId != null
+                        ? _canRespondToTask(selectedTask!, userId)
+                        : false,
                   ),
                 ),
               ),
@@ -338,6 +373,9 @@ class MapPageState extends State<MapPage> {
                   onAction: (accept) => _handleAction(selectedTask!, accept),
                   isLoading: _isActionLoading,
                   primaryBlue: primaryBlue,
+                  canRespond: userId != null
+                      ? _canRespondToTask(selectedTask!, userId)
+                      : false,
                 ),
               ),
           ],
@@ -357,6 +395,7 @@ class _TaskList extends StatelessWidget {
   final Color primaryBlue;
   final bool isMobile;
   final bool isActionLoading;
+  final bool Function(Task task) canRespond;
 
   const _TaskList({
     required this.tasks,
@@ -368,6 +407,7 @@ class _TaskList extends StatelessWidget {
     required this.primaryBlue,
     required this.isMobile,
     required this.isActionLoading,
+    required this.canRespond,
   });
 
   @override
@@ -393,6 +433,7 @@ class _TaskList extends StatelessWidget {
             onRefuse: () => onRefuse(task),
             isOwnTask: isOwnTask,
             isLoading: isActionLoading && isSelected,
+            canRespond: canRespond(task),
           );
         },
       ),
@@ -411,6 +452,7 @@ class _TaskListCard extends StatelessWidget {
   final VoidCallback onRefuse;
   final bool isOwnTask;
   final bool isLoading;
+  final bool canRespond;
 
   const _TaskListCard({
     required this.task,
@@ -423,6 +465,7 @@ class _TaskListCard extends StatelessWidget {
     required this.onRefuse,
     required this.isOwnTask,
     required this.isLoading,
+    required this.canRespond,
   });
 
   String _formatTime(DateTime dt) {
@@ -550,7 +593,8 @@ class _TaskListCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: isLoading || isOwnTask ? null : onRefuse,
+                        onPressed:
+                            isLoading || isOwnTask || !canRespond ? null : onRefuse,
                         child: isLoading
                             ? const SizedBox(
                                 height: 16,
@@ -571,7 +615,8 @@ class _TaskListCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: isLoading || isOwnTask ? null : onAccept,
+                        onPressed:
+                            isLoading || isOwnTask || !canRespond ? null : onAccept,
                         child: isLoading
                             ? const SizedBox(
                                 height: 16,
@@ -607,6 +652,7 @@ class _SelectedTaskCard extends StatelessWidget {
   final VoidCallback onOpenDetails;
   final void Function(bool accept) onAction;
   final bool isLoading;
+  final bool canRespond;
 
   const _SelectedTaskCard({
     required this.task,
@@ -615,6 +661,7 @@ class _SelectedTaskCard extends StatelessWidget {
     required this.onOpenDetails,
     required this.onAction,
     required this.isLoading,
+    required this.canRespond,
   });
 
   String _formatTime(DateTime dt) {
@@ -696,7 +743,9 @@ class _SelectedTaskCard extends StatelessWidget {
                 Row(
                   children: [
                     OutlinedButton(
-                      onPressed: isLoading || isOwnTask ? null : () => onAction(false),
+                      onPressed: isLoading || isOwnTask || !canRespond
+                          ? null
+                          : () => onAction(false),
                       child: isLoading
                           ? const SizedBox(
                               height: 16,
@@ -711,7 +760,9 @@ class _SelectedTaskCard extends StatelessWidget {
                         backgroundColor: primaryBlue,
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: isLoading || isOwnTask ? null : () => onAction(true),
+                      onPressed: isLoading || isOwnTask || !canRespond
+                          ? null
+                          : () => onAction(true),
                       child: isLoading
                           ? const SizedBox(
                               height: 16,
@@ -748,6 +799,7 @@ class _TaskDetailsPanel extends StatelessWidget {
   final void Function(bool accept) onAction;
   final bool isLoading;
   final Color primaryBlue;
+  final bool canRespond;
 
   const _TaskDetailsPanel({
     required this.task,
@@ -756,6 +808,7 @@ class _TaskDetailsPanel extends StatelessWidget {
     required this.onAction,
     required this.isLoading,
     required this.primaryBlue,
+    required this.canRespond,
   });
 
   String _formatTime(DateTime dt) {
@@ -869,7 +922,9 @@ class _TaskDetailsPanel extends StatelessWidget {
                             backgroundColor: primaryBlue,
                             foregroundColor: Colors.white,
                           ),
-                          onPressed: isLoading || isOwnTask ? null : () => onAction(true),
+                          onPressed: isLoading || isOwnTask || !canRespond
+                              ? null
+                              : () => onAction(true),
                           child: isLoading
                               ? const SizedBox(
                                   height: 18,
@@ -885,7 +940,9 @@ class _TaskDetailsPanel extends StatelessWidget {
                       const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: isLoading || isOwnTask ? null : () => onAction(false),
+                          onPressed: isLoading || isOwnTask || !canRespond
+                              ? null
+                              : () => onAction(false),
                           child: isLoading
                               ? const SizedBox(
                                   height: 18,

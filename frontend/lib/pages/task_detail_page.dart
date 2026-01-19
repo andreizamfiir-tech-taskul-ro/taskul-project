@@ -42,6 +42,16 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
 
   Future<void> _handleAction(bool accept) async {
     if (widget.isPreview) return;
+    if (widget.task.statusId != 0 || widget.task.assignedUserId != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Task-ul nu mai poate fi acceptat/refuzat.'),
+          ),
+        );
+      }
+      return;
+    }
     final auth = AuthState.instance;
     if (!auth.isAuthenticated || auth.user == null) {
       if (mounted) {
@@ -216,12 +226,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                     },
                   ),
                   const SizedBox(height: 16),
-                _ActionRow(
-                  isLoading: _isActionLoading,
-                  onAccept: () => _handleAction(true),
-                  onRefuse: () => _handleAction(false),
-                  isOwnTask: isOwnTask,
-                ),
+                // Accept/refuse actions hidden in details view.
                 ],
               ],
             ),
@@ -759,13 +764,13 @@ class _ActionRow extends StatelessWidget {
   final bool isLoading;
   final VoidCallback onAccept;
   final VoidCallback onRefuse;
-  final bool isOwnTask;
+  final bool canRespond;
 
   const _ActionRow({
     required this.isLoading,
     required this.onAccept,
     required this.onRefuse,
-    required this.isOwnTask,
+    required this.canRespond,
   });
 
   @override
@@ -784,9 +789,9 @@ class _ActionRow extends StatelessWidget {
               ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-              ),
+            ),
           ),
-            onPressed: isLoading || isOwnTask ? null : onAccept,
+            onPressed: isLoading || !canRespond ? null : onAccept,
             child: isLoading
                 ? const SizedBox(
                     height: 18,
@@ -810,7 +815,7 @@ class _ActionRow extends StatelessWidget {
               ),
               foregroundColor: Colors.deepPurple,
             ),
-            onPressed: isLoading || isOwnTask ? null : onRefuse,
+            onPressed: isLoading || !canRespond ? null : onRefuse,
             child: isLoading
                 ? const SizedBox(
                     height: 18,

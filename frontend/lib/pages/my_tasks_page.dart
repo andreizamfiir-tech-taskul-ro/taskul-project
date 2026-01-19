@@ -426,6 +426,8 @@ class _TaskTile extends StatelessWidget {
         }
         final review = snapshot.data;
         if (review == null) return const SizedBox.shrink();
+        final isCreator = task.creatorId == currentUserId;
+        final title = isCreator ? 'Review acordat' : 'Review primit';
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.all(10),
@@ -437,9 +439,9 @@ class _TaskTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Review primit',
-                style: TextStyle(fontWeight: FontWeight.w700),
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 6),
               _StarRow(rating: review.rating, size: 16),
@@ -498,23 +500,43 @@ class _TaskTile extends StatelessWidget {
     }
 
     if (task.statusId == 3 && isCreator && task.assignedUserId != null) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: OutlinedButton(
-          onPressed: isUpdating
-              ? null
-              : () async {
-                  final result = await _showReviewDialog(context);
-                  if (result != null) {
-                    onReview(task, result.$1, result.$2);
-                  }
-                },
-          child: const Text('Lasa review'),
-        ),
+      if (receivedReview == null) {
+        return _buildReviewAction(context);
+      }
+      return FutureBuilder<TaskReview?>(
+        future: receivedReview,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildReviewAction(context);
+          }
+          if (snapshot.hasError) {
+            return _buildReviewAction(context);
+          }
+          final review = snapshot.data;
+          if (review != null) return const SizedBox.shrink();
+          return _buildReviewAction(context);
+        },
       );
     }
 
     return const SizedBox.shrink();
+  }
+
+  Widget _buildReviewAction(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: OutlinedButton(
+        onPressed: isUpdating
+            ? null
+            : () async {
+                final result = await _showReviewDialog(context);
+                if (result != null) {
+                  onReview(task, result.$1, result.$2);
+                }
+              },
+        child: const Text('Lasa review'),
+      ),
+    );
   }
 
   Future<String?> _showNoteDialog(BuildContext context) async {
